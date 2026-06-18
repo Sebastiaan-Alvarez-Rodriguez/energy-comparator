@@ -9,7 +9,7 @@
         inherit system;
       };
 
-      buildPythonPackages = pkgs.python311Packages;
+      buildPythonPackages = pkgs.python314Packages;
 
       # Our build
       energy-comparator = buildPythonPackages.buildPythonApplication {
