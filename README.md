@@ -18,5 +18,5 @@ name,type,gasconstant,gasconstant_unit,gasvariable,powerconstant,powerconstant_u
  
 Then, run the program using, e.g:
 ```bash
-python3 calculate.py --gas 1700 --power-low 2700 --power-high 2800 --power-gen-low 3000 --power-gen-high 5000 --covariance-matrix "[ [60,20,20,-7,-14], [20,60,8,0,0], [20,8,60,0,0], [-7,0,0,60,0], [-14,0,0,0,60] ]" --filter "type=='vast' & name.str.contains('GreenChoice')"
+python3 contract_optimizer.py --gas 1700 --power-low 2700 --power-high 2800 --power-gen-low 3000 --power-gen-high 5000 --covariance-matrix "[ [60,20,20,-7,-14], [20,60,8,0,0], [20,8,60,0,0], [-7,0,0,60,0], [-14,0,0,0,60] ]" --filter "type=='vast' & name.str.contains('GreenChoice')"
 ```
