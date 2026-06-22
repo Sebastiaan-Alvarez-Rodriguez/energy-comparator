@@ -11,59 +11,15 @@ def set_if_not_null(d, key, value):
     if value:
         d[key] = value
 
-def get_profile(path=None, profile_covariance_matrix=None, profile_gas=None, profile_power_low=None, profile_power_high=None, profile_power_gen_low=None, profile_power_gen_high=None):
-    if path:
-        with open(path, 'r') as f:
-            profile = json.load(f)
-    else:
-        profile = {}
 
-    set_if_not_null(profile, 'gas', profile_gas)
-    set_if_not_null(profile, 'power_low', profile_power_low)
-    set_if_not_null(profile, 'power_high', profile_power_high)
-    set_if_not_null(profile, 'power_gen_low', profile_power_gen_low)
-    set_if_not_null(profile, 'power_gen_high', profile_power_gen_high)
-    for name in ['gas', 'power_low', 'power_high', 'power_gen_low', 'power_gen_high']:
-        if f'{name}' not in profile:
-            print(f'Key "{name}" not set, assuming {name} = 0.0')
-            profile[name] = 0.0
-    if profile_covariance_matrix:
-        profile['covariance_matrix'] = np.array(json.loads(profile_covariance_matrix))
-        if profile['covariance_matrix'].shape != (5,5,):
-            print(f'Found a non-conforming matrix shape. Must be 5 rows, 5 columns. Found {profile["covariance_matrix"].shape[0]} rows, {profile["covariance_matrix"].shape[1]} columns.')
-        print(f'The covariance matrix:')
-        print(profile['covariance_matrix'])
-    return profile
-
-
-def normalize(df):
-    # normalizes data units to year basis
-    power_month_mask = df.powerconstant_unit == 'month'
-    df['powerconstant'] = df.powerconstant * 12 * power_month_mask + df.powerconstant * (~power_month_mask)
-    power_day_mask = df.powerconstant_unit == 'day'
-    df['powerconstant'] = df.powerconstant * 12 * power_day_mask + df.powerconstant * (~power_day_mask)
-    df['powerconstant_unit'] = 'year'
-    gas_month_mask = df.gasconstant_unit == 'month'
-    df['gasconstant'] = df.gasconstant * 12 * gas_month_mask + df.gasconstant * (~gas_month_mask)
-    gas_day_mask = df.gasconstant_unit == 'day'
-    df['gasconstant'] = df.gasconstant * 12 * gas_day_mask + df.gasconstant * (~gas_day_mask)
-    df['gasconstant_unit'] = 'year'
-    return df
-
-
-def verify(df, *names):
-    # verifies integrity of contract prices csv file.
+def verify_house(df, *names):
+    # verifies integrity of house csv file.
     required_csv_names = ['entity_id', 'state', 'last_changed']
     ok = True
     for name in required_csv_names:
         if name not in df:
             print(f'[Error] Missing column name "{name}" in csv header.')
             ok = False
-    # for idx, entry in df.iterrows():
-    #     if not found_production:
-    #         found_production = entry.iloc[0] == p_name
-    #     if not found_consumption:
-    #         found_consumption = entry.iloc[0] == c_name
 
     for n in names:
         if not any(df['entity_id'] == n):
@@ -71,6 +27,14 @@ def verify(df, *names):
             ok = False
     return ok
 
+def verify_prices(df, *names):
+    # verifies integrity of house csv file.
+    ok = True
+    for name in names:
+        if name not in df:
+            print(f'[Error] Missing column name "{name}" in csv header.')
+            ok = False
+    return ok
 
 def best_offer(df, mean_vector, saldering, outage):
     '''
@@ -230,23 +194,37 @@ def printcmp(df1, p1, np1, nc1, df2, p2, np2, nc2):
 
 def main():
     # Simple program to calculate optimal home battery size for a given power consumption
+    # all power related specs expected in kWh, or euro/kWh where applicable.
     parser = argparse.ArgumentParser()
-    parser.add_argument('--history', default=str(Path.cwd() / 'history.csv'), help='Data file containing historical gross production and grid consumption values.')
-    parser.add_argument('--p', default='sensor.solaredge_solar_power', help='Index sensor name for production values')
-    parser.add_argument('--np', default='sensor.electricity_meter_power_production', help='Index sensor name for net production values (i.e. what is delivered back to the grid)')
-    parser.add_argument('--nc', default='sensor.electricity_meter_power_consumption', help='Index sensor name for consumption values')
-    # parser.add_argument('--covariance-matrix', default=None, help='Set the 5x5 covariance matrix. Relations to denote: gas, power-low, power-high, power-generation-low, power-generation-high. Of course, the diagonal entries are standard deviations and the non-diagonal entries provide pairwise covariance. should look like json: i.e. `[ [60,0,0,0,0], [0,60,0,0,0], [0,0,60,0,0], [0,0,0,60,0], [0,0,0,0,60] ]`. Use only if you know what you are doing.')
+    parser.add_argument('--history-house', default=str(Path.cwd() / 'history_house.csv'), help='Data file containing house historical gross production and grid consumption values.')
+    parser.add_argument('--hp', default='sensor.solaredge_solar_power', help='Index name for sensor production values')
+    parser.add_argument('--hnp', default='sensor.electricity_meter_power_production', help='Index name for sensor net production values (i.e. what is delivered back to the grid)')
+    parser.add_argument('--hnc', default='sensor.electricity_meter_power_consumption', help='Index name for sensor consumption values')
+    parser.add_argument('--history-prices', default=str(Path.cwd() / 'history_prices.csv'), help='Data file containing historical dynamic prices')
+    parser.add_argument('--pp', default='prijs_excl_belastingen', help='Index name for prices')
     parser.add_argument('--filter', type=str, default=None, help='Execute filter query on dataset. Example: --filter "`type==\'vast\' & name!=\'Oxxio 1 jaar\'"`. Exact syntax: https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.query.html')
     args = parser.parse_args()
 
-    # profile = get_profile(args.profile, args.covariance_matrix, args.gas, args.power_low, args.power_high, args.power_gen_low, args.power_gen_high)
-    df = pd.read_csv(args.history, comment='#')
-    # df = normalize(df)
-    if not verify(df, args.p, args.np, args.nc):
+    df = pd.read_csv(args.history_house, comment='#')
+    houseargs = [args.hp, args.hnp, args.hnc] # arguments related to house dataset
+    if not verify_house(df, *houseargs):
         return
-
     df = df.pivot(index = 'last_changed', columns='entity_id', values='state')
     df = df.fillna(0.0) # this is valid: used sensors fill NaN sometimes when no production is present.
+
+    prices = pd.read_csv(args.history_prices, comment='#', sep=';')
+    priceargs = [args.pp]
+    if not verify_prices(prices, *priceargs):
+        return
+    prices['prijs_excl_belastingen'] = prices['prijs_excl_belastingen'].str.replace(',', '.').astype(float)
+    prices['datum_utc'] = pd.to_datetime(prices['datum_utc'])
+    prices = prices.set_index('datum_utc')
+    prices.index.name = 'last_changed'
+    prices = prices[['prijs_excl_belastingen']].resample('1h').mean()
+    prices.index = prices.index.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+    df = df.merge(prices, left_index=True, right_index=True,  how='left') # with this trick: hourly prices are added to the main df, using left join. If there is no hit for the measured time in 'df', then a NaN is filled in.
+
+
 
     print(f'Number of datapoints: {len(df.index)}')
     if args.filter:
@@ -254,28 +232,33 @@ def main():
         print(f'Number of datapoints (post-filter): {len(df.index)}')
 
     print('Base situation (no battery)')
-    argdata = [args.p, args.np, args.nc] # arguments related to dataset
-    printst(df, *argdata)
+    printst(df, *houseargs)
 
     print()
     print('Case 1a: with overflow, 10kWh battery, 5kW inverter unit.')
-    sim_df = simulate_battery(df, *argdata, capacity_kwh=10, inverter_limit_kw=5, min_pct=0.20, max_pct=0.80, discard_overflow=False)
-    printst(sim_df, *argdata)
+    sim_df = simulate_battery(df, *houseargs, capacity_kwh=10, inverter_limit_kw=5, min_pct=0.20, max_pct=0.80, discard_overflow=False)
+    printst(sim_df, *houseargs)
+    printcmp(df, *houseargs, sim_df, *houseargs)
 
     print()
     print('Case 1b: no overflow, 10kWh battery, 5kW inverter unit.')
-    sim_df = simulate_battery(df, *argdata, capacity_kwh=10, inverter_limit_kw=5, min_pct=0.20, max_pct=0.80, discard_overflow=True)
-    printst(sim_df, *argdata)
-
-    print()
-    printcmp(df, *argdata, sim_df, *argdata)
+    sim_df = simulate_battery(df, *houseargs, capacity_kwh=10, inverter_limit_kw=5, min_pct=0.20, max_pct=0.80, discard_overflow=True)
+    printst(sim_df, *houseargs)
+    printcmp(df, *houseargs, sim_df, *houseargs)
 
     print()
     print('Case 1c: with overflow, 5kWh battery, 5kW inverter unit.')
-    sim_df = simulate_battery(df, *argdata, capacity_kwh=5, inverter_limit_kw=5, min_pct=0.20, max_pct=0.80, discard_overflow=False)
-    printst(sim_df, *argdata)
-    print()
-    printcmp(df, *argdata, sim_df, *argdata)
+    sim_df = simulate_battery(df, *houseargs, capacity_kwh=5, inverter_limit_kw=5, min_pct=0.20, max_pct=0.80, discard_overflow=False)
+    printst(sim_df, *houseargs)
+    printcmp(df, *houseargs, sim_df, *houseargs)
+
+    # next steps:
+    # 1. make a function to compute costs for dynamic contracts for 1 year of data (use historical data from jeroen.nl)
+    # 2. consult current contract offers on the market (both price-fixed for 1-3 years and dynamic)
+    # 3. create a function to compare and find the best contract offer for a given year of house consumption/production
+    # 4. use covariance matrix to create many years of input data (house consumption/production), and compute in how many percent of the cases which contract would be better
+    # 5. Add measures (battery optimization, disallowing any power to be returned to the grid, buying power for the battery when price is low) to compare with.
+    return
     # mean_vector contains the usage/generation estimations.
     # mean_vector = np.array([profile['gas'], profile['power_low'], profile['power_high'], profile['power_gen_low'], profile['power_gen_high']])
 
@@ -289,7 +272,6 @@ def main():
 
     # print(sufficiency.to_string())
 
-    return
     if not 'covariance_matrix' in profile: # No statistics -> just simple computing
         gas, power = best_offer(df, mean_vector, args.saldering, args.outage)
         year_price = gas.total+power.total + args.extra_costs
