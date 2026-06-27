@@ -1,39 +1,4 @@
-name,type,gasconstant,gasconstant_unit,gasvariable,powerconstant,powerconstant_unit,powervariable_low,powervariable_high,powergen_low,powergen_high,bonus
-GreenChoice NL windstroom 1 jaar vast,vast,,,,10.2558333333,month,0.31974,0.374,0.08,0.08,0
-GreenChoice via gaslicht 1 jaar,vast,8.19,month,1.2620,,,,,,,92.5
-Gewoon EU groen stroom 1 jaar vast,vast,,,,95.59,year,0.28732,0.30123,0.07,0.07,0
-Oxxio 1 jaar,vast,71.87,year,1.20192,71.87,year,0.31179,0.31179,0.09,0.09,0
-Frank energie flex gas,flexible,84.00,year,1.14464,,,,,,,40
-Budget energie gas,flexible,71.88,year,1.17129,,,,,,,0
-Essent Stroom & Gas 1 jaar,vast,95.83,year,1.46375,119.79,year,0.42229,0.42471,0.0550,0.0550,50
-Zonnepark Welschap (GreenChoice) 3 jaar Stroom,vast,,,,93.42,year,0.36739,0.37571,0.115,0.115,0
-Zonnepark Welschap (GreenChoice) 3 jaar Gas,vast,93.42,year,1.32124,,,,,,,0
-Zonnepark Welschap (GreenChoice) 1 jaar Gas,vast,93.42,year,1.30553,,,,,,,0
-Zonnepark Welschap (GreenChoice) 1 jaar Stroom,vast,,,,93.42,year,0.31724,0.37149,0.115,0.115,0
-Innova energie via Independer 1 jaar,vast,7.96583,month,1.23462,7.96583,month,0.28732,0.30123,0.07,0.07,0
-Innova energie via Independer 3 jaar,vast,7.96583,month,1.25444,7.96583,month,0.31568,0.33158,0.07,0.07,0
-Innova energie 3 jaar gas,vast,,,,95.59,year,0.31568,0.33158,0.07,0.07,0
-Innova energie 3 jaar stroom,vast,95.59,year,1.25444,,,,,,,
-Coolblue via Independer 1 jaar,vast,7.5,month,1.24401,20,month,0.26064,0.26983,0.05,0.05,100
-GreenChoice via Independer 1 jaar gas met bonus,vast,8.18833,month,1.26204,,,,,,,92.50
-GreenChoice via Independer 1 jaar gas,vast,8.18833,month,1.21501,,,,,,,0
-GreenChoice via Independer 2 jaar gas,vast,8.18833,month,1.28004,,,,,,,0
-Pure Energie via Independer 1 jaar gas,vast,8.99,month,1.28556,,,,,,,90
-Pure Energie 1 jaar stroom+gas,vast,107.88,year,1.28556,107.88,year,0.29842,0.29389,0.06,0.06,0
-Pure Energie via Independer 1 jaar gas+stroom,vast,8.99,month,1.28556,8.99,month,0.29389,0.29842,0.06,0.06,0
-Budget Energie,flexible,5.99,month,1.17129,5.99,month,0.27012,0.27811,0.05,0.05,0
-Vattenfall 1 jaar vast stroom,vast,,,,131.84,year,0.285802,0.332266,0.045,0.045,0
-Vattenfall 1 jaar vast gas,vast,71.87,year,1.279224,,,,,,,0
-UnitedConsumers 1 jaar,vast,142.34,year,1.32777,,,,,,,0
-UnitedConsumers 1 jaar,vast,,,,142.34,year,0.30601,0.36639,0.05,0.05,0
-GreenChoice 1 jaar via gaslicht.com,vast,98.26,year,1.262,,,,,,,92.50
-Pure Energie 1 jaar via gaslicht.com,vast,107.88,year,1.2855,,,,,,,90
-Budget Energie 2 jaar via Independer,vast,6.99,month,1.25599,,,,,,,0
-GreenChoice 1 jaar via easyswitch.nl,vast,98.26,year,1.26204,,,,,,,92.50
-Pure energie 1 jaar via easyswitch.nl,vast,107.88,year,1.28556,,,,,,,90
-Engie 1 jaar via easyswitch.nl,vast,120,year,1.26683,,,,,,,50
-Delta 1 jaar,vast,114.29,year,1.39441,114.29,year,0.20005,0.22046,0.09,0.09,0
-Eneco 1 jaar vast gas,vast,71.88,year,1.25912,,,,,,,0
-Eneco 3 jaar vast gas,vast,71.88,year,1.26099,,,,,,,0
-Eneco 1 jaar vast stroom,vast,,,,71.88,year,0.31979,0.31979,0.09,0.09,0
-Essent Stroom & Gas 1 jaar via eigen website,vast,83.93,year,1.43846,83.93,year,0.39725,0.39967,0.055,0.055,0
+name,type,powerconstant,powerconstant_unit,powervariable_low,powervariable_high,powergen,powergen_cost_kwh,powergen_cost_constant,bonus
+budget thuis 3 jaar vast (independer),vast,8.99,month,0.24103,0.24103,0.05379,0.03629,0,0
+united consumers 3 jaar vast (independer),vast,8.56,month,0.22034,0.26500,0.10812,0.10312,0,240
+united consumers 1 jaar vast (independer),vast,8.70,month,0.23510,0.28010,0.12642,0.12142,0,190

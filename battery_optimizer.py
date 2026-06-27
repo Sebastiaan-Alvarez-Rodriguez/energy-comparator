@@ -1,9 +1,10 @@
 import argparse
+from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
-import functools
-import json
+import itertools
 import numpy as np
 import pandas as pd
+import matplotlib.pyplot as plt
 from scipy.stats import multivariate_normal
 
 
@@ -35,79 +36,6 @@ def verify_prices(df, *names):
             print(f'[Error] Missing column name "{name}" in csv header.')
             ok = False
     return ok
-
-def best_offer(df, mean_vector, saldering, outage):
-    '''
-    Calculates the best contract for power and gas. Considers both combined and separate contracts.
-    :param df Dataframe of contracts.
-    :param mean_vector Vector containing estimated gas, power_low, power_high, power_generation_low, power_generation_high.
-    :param saldering Percentage of power generated that can be subtracted from power usage, between 0 and 1.
-    :param outage Expected Percentage of reduction in generated power due to the net turning off the supply.
-    :return a (Pandas.Series, Pandas.Series) containing: the cheapest contract row for gas, cheapest contract for power.
-    '''
-    gas, power_low, power_high, power_gen_low, power_gen_high = mean_vector
-    df['calc_gas'] = df.gasconstant + gas * df.gasvariable
-    expected_low = power_low-(power_gen_low*saldering*outage)
-    expected_high = power_high-(power_gen_high*saldering*outage)
-    df['calc_power'] = df.powerconstant + \
-        (expected_low * df.powervariable_low if expected_low > 0 else expected_low * df.powergen_low) + \
-        (expected_high * df.powervariable_high if expected_high > 0 else expected_high * df.powergen_high) 
-
-    df['total'] = df.calc_gas.fillna(0) + df.calc_power.fillna(0) + df.bonus.fillna(0)
-
-    only_gas_mask = df.powerconstant.isna() & df.powervariable_low.isna() & df.powervariable_high.isna()
-    only_power_mask = df.gasconstant.isna() & df.gasvariable.isna()
-    # combined contracts comparison
-    combined_df = df[(~only_gas_mask) & (~only_power_mask)]
-    min_combined_idx = combined_df.loc[combined_df.total.idxmin()] if not combined_df.empty else None
-
-    # separate contracts comparisons
-    only_gas_df = df[only_gas_mask]
-    min_gas_idx = only_gas_df.loc[only_gas_df.total.idxmin()] if not only_gas_df.empty else None
-
-    only_power_df = df[only_power_mask]
-    min_power_idx = only_power_df.loc[only_power_df.total.idxmin()] if not only_power_df.empty else None
-    # print(f'individual gas: {min_gas_idx}')
-    # print(f'individual power idx: {min_power_idx}')
-    if min_combined_idx is None:
-        if min_gas_idx is None or min_power_idx is None:
-            return None, None
-        return min_gas_idx, min_power_idx
-    if min_gas_idx is None or min_power_idx is None or min_combined_idx.total <= min_power_idx.total + min_gas_idx.total:
-        return pd.Series([min_combined_idx['name'], min_combined_idx.type, min_combined_idx.gasconstant, min_combined_idx.gasconstant_unit, min_combined_idx.gasvariable, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, min_combined_idx.bonus / 2, min_combined_idx.calc_gas, np.nan, min_combined_idx.total / 2], index=df.columns), \
-        pd.Series([min_combined_idx['name'], min_combined_idx.type, np.nan, np.nan, np.nan, min_combined_idx.powerconstant, min_combined_idx.powerconstant_unit, min_combined_idx.powervariable_low, min_combined_idx.powervariable_high, min_combined_idx.powergen_low, min_combined_idx.powergen_high, min_combined_idx.bonus / 2, np.nan, min_combined_idx.calc_power, min_combined_idx.total / 2], index=df.columns)
-    return min_gas_idx, min_power_idx
-
-
-def find_minimal_function(df, mean_vector, cov_matrix, saldering, outage, samplesize=1000):
-    # Find the linear function with the highest probability for each set of mean and covariance
-    gas_dict = {}
-    power_dict = {}
-    linear_func = functools.partial(best_offer, df, saldering=saldering, outage=outage)
-    inputs = np.random.multivariate_normal(mean_vector, cov_matrix, samplesize)
-    outputs = [linear_func(sample) for sample in inputs]
-
-    for gas, power in outputs:
-        if gas is None or power is None:
-            print('[Warning] found no winner. Filtered too much data?')
-            continue
-        gas_dict.setdefault(gas['name'], []).append(gas.total)
-        power_dict.setdefault(power['name'], []).append(power.total)
-    for k, v in gas_dict.items():
-        gas_dict[k] = (len(v), np.mean(v))
-    for k, v in power_dict.items():
-        power_dict[k] = (len(v), np.mean(v))
-    best_gas = max(gas_dict, key=lambda x: gas_dict[x][0]) # gets the key with most occurrences (=most optimal values)
-    best_power = max(power_dict, key=lambda x: power_dict[x][0])
-    print('On average, the best contract is:')
-    print(f'Gas: "{best_gas}" with price {gas_dict[best_gas][1]} euro/year, {gas_dict[best_gas][1]/12} euro/month (best in {gas_dict[best_gas][0]/samplesize *100}% of situations measured)')
-    print(f'Power: "{best_power}" with price {power_dict[best_power][1]} euro/year, {power_dict[best_power][1]/12} euro/month (best in {power_dict[best_power][0]/samplesize *100}% of situations measured)')
-    print()
-    print('Case summary:')
-    print(f'''Gas:      {gas_dict[best_gas][1]}/yr ("{best_gas}")
-Power:    {power_dict[best_power][1]}/yr ("{best_power}")
-Combined: {gas_dict[best_gas][1] + power_dict[best_power][1]}/yr
-''')
 
 def simulate_battery(df, p_col, np_col, nc_col, capacity_kwh=10, inverter_limit_kw=5.0, min_pct=0.20, max_pct=0.80, discard_overflow=False):
     '''
@@ -153,7 +81,6 @@ def simulate_battery(df, p_col, np_col, nc_col, capacity_kwh=10, inverter_limit_
                 new_np = 0.0 if discard_overflow else remaining_surplus
             else:
                 new_np = 0.0 if discard_overflow else np_val # no room for power
-            
         else:
             new_np = np_val
             
@@ -178,12 +105,12 @@ def simulate_battery(df, p_col, np_col, nc_col, capacity_kwh=10, inverter_limit_
     sim_df['battery_soc_kwh'] = sim_battery_soc
     sim_df[nc_col] = sim_nc
     sim_df[np_col] = sim_np
-    
     return sim_df
 
 def printst(df, p, np, nc):
-    print(f'required overal energy: {df[nc].sum()}kWh')
-    print(f'net produced energy:    {df[np].sum()}kWh')
+    print(f'grid energy consumed: {df[nc].sum()}kWh')
+    print(f'OWN  energy consumed: {df[p].sum() - df[np].sum()}kWh')
+    print(f'grid energy produced: {df[np].sum()}kWh')
 
 def printcmp(df1, p1, np1, nc1, df2, p2, np2, nc2):
     reduction_kwh = df1[nc1].sum() - df2[nc2].sum()
@@ -191,6 +118,136 @@ def printcmp(df1, p1, np1, nc1, df2, p2, np2, nc2):
     overflow_kwh = df1[np1].sum() - df2[np2].sum()
     print(f'Overal energy overflowing reduction: {overflow_kwh}kWh ({overflow_kwh / df1[np1].sum() *100}%)')
 
+# helper function for parallel processing
+def run_single_simulation(inv, cap, df, p_col, np_col, nc_col, min_pct, max_pct, discard_overflow):
+    sim = simulate_battery(df, p_col, np_col, nc_col, capacity_kwh=cap, inverter_limit_kw=inv, min_pct=min_pct, max_pct=max_pct, discard_overflow=discard_overflow)
+    # Calculate metrics in one place
+    np_sum = sim[np_col].sum()
+    return {
+        "Inverter": inv,
+        "Capacity": cap,
+        "NC_Sum": sim[nc_col].sum(),
+        "NP_Sum": np_sum,
+        "P_NP_Diff": sim[p_col].sum() - np_sum
+    }
+
+
+def plot_battery(df, p_col, np_col, nc_col, min_pct=0.20, max_pct=0.80, discard_overflow=False):
+    capacities = [x*0.5 for x in range (0, 61)]
+    inverters = [1, 2, 5, 10]
+    inverter_colors = {
+        1: "#1f77b4",   # Muted Blue
+        2: "#ff7f0e",   # Safety Orange
+        5: "#2ca02c",   # Grass Green
+        10: "#9467bd"   # Deep Purple
+    }
+    metric_styles = {
+        "NC_Sum": {"style": "-", "label": "grid-consumption"},
+        "NP_Sum": {"style": "--", "label": "grid-production"},
+        # "P_NP_Diff": {"style": ":", "label": "P-NP Diff"}
+    }
+    x_offsets = {1: -0.15, 2: -0.05, 5: 0.05, 10: 0.15}
+
+    # ProcessPoolExecutor automatically uses all available CPU cores
+    with ProcessPoolExecutor() as executor:
+        futures = [ # Submit all tasks to the queue
+            executor.submit(run_single_simulation, inv, cap, df, p_col, np_col, nc_col, min_pct, max_pct, discard_overflow ) for inv, cap in itertools.product(inverters, capacities)
+        ]
+        results = [f.result() for f in futures]
+    outputs_df = pd.DataFrame(results)
+
+
+
+
+    plt.figure(figsize=(8, 5))
+    for inv, group in outputs_df.groupby("Inverter"):
+        color = inverter_colors.get(inv, "gray") # Fallback color if size changes
+        offset = x_offsets.get(int(inv), 0)
+        shifted_capacity = group["Capacity"] + offset
+        for col, info in metric_styles.items():
+            plt.plot(
+                shifted_capacity, 
+                group[col], 
+                color=color, 
+                linestyle=info["style"], 
+                linewidth=2
+            )
+
+    # Construct a two-part custom legend to avoid a messy 12-item list
+    legend_elements = (
+        [plt.Line2D([0], [0], color=c, lw=3, label=f"Inverter {k} kW") for k, c in inverter_colors.items()] +
+        [plt.Line2D([0], [0], color="gray", ls=s["style"], lw=2, label=s["label"]) for s in metric_styles.values()]
+    )
+
+    # Figure layout styling
+    plt.title("Battery Simulation: Grouped by Inverter Size", fontsize=14, pad=15, fontweight='bold')
+    plt.xlabel("Capacity (kWh)", fontsize=11, labelpad=10)
+    plt.ylabel("Energy (kWh)", fontsize=11, labelpad=10)
+    plt.grid(True, linestyle="--", alpha=0.4, color="gray")
+
+    # Place the clean 7-item legend
+    plt.legend(handles=legend_elements, loc="upper left", frameon=True, facecolor="white", edgecolor="none")
+
+    plt.tight_layout()
+    plt.show()
+    
+    # next we create a barplot showing the gain as compared to doing nothing
+    nc_base = df[nc_col].sum()
+    np_base = df[np_col].sum()
+
+    # Generate a bar plot for the 5kw inverter size
+    inv = 5
+    group = outputs_df[outputs_df['Inverter'] == inv]
+    # for inv, group in outputs_df.groupby("Inverter"):
+        # Ensure data is sorted by capacity for accurate "previous" calculations
+    group = group.sort_values("Capacity").copy()
+
+    # Calculate Bar 1 & 3: Reduction compared to 0 kWh baseline
+    group["NC_Red_Base"] = ((nc_base - group["NC_Sum"]) / nc_base) * 100
+    group["NP_Red_Base"] = ((np_base - group["NP_Sum"]) / np_base) * 100
+
+    # Calculate Bar 2 & 4: Reduction compared to the previous capacity step
+    # (Using shift() to get the previous row's value; first row defaults to 0)
+    group["NC_Red_Prev"] = ((group["NC_Sum"].shift(1) - group["NC_Sum"]) / group["NC_Sum"].shift(1)).fillna(0) * 100
+    group["NP_Red_Prev"] = ((group["NP_Sum"].shift(1) - group["NP_Sum"]) / group["NP_Sum"].shift(1)).fillna(0) * 100
+
+    plt.figure(figsize=(14, 6))
+
+    capacities_list = group["Capacity"].values
+    x = np.arange(len(capacities_list))  # Label locations
+    width = 0.18                         # Width of each individual bar
+
+    bar1 = plt.bar(x - 1.5 * width, group["NC_Red_Base"], width, label="NC vs 0kWh (Total Drop)", color="#2ca02c")
+    bar2 = plt.bar(x - 0.5 * width, group["NC_Red_Prev"], width, label="NC vs Prev Step (Marginal)", color="#98df8a")
+    bar3 = plt.bar(x + 0.5 * width, group["NP_Red_Base"], width, label="NP vs 0kWh (Total Drop)", color="#1f77b4")
+    bar4 = plt.bar(x + 1.5 * width, group["NP_Red_Prev"], width, label="NP vs Prev Step (Marginal)", color="#aec7e8")
+
+    # Add the text labels on top of Bar 2 and Bar 4
+    # 'padding=3' spaces the text slightly above the bar; 'fontsize=8' ensures it fits the narrow width
+    for bar in [bar1, bar2, bar3, bar4]:
+        plt.gca().bar_label(
+            bar, 
+            fmt="%.1f%%", 
+            rotation=90, 
+            padding=3, 
+            fontsize=8, 
+            color="#2c3e50"
+        )
+    plt.title(f"Relative Energy Reduction Metrics - Inverter: {inv} kW", fontsize=14, pad=15, fontweight="bold")
+    plt.xlabel("Battery Capacity (kWh)", fontsize=11, labelpad=10)
+    plt.ylabel("Reduction (%)", fontsize=11, labelpad=10)
+
+    # Map the X-axis tick marks back to the actual capacity numbers
+    plt.xticks(x, capacities_list)
+
+    # Append '%' sign to the Y-axis labels
+    plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y:.1f}%'))
+
+    plt.grid(True, linestyle="--", alpha=0.3, axis="y")
+    plt.legend(loc="upper right", frameon=True, facecolor="white", edgecolor="none")
+
+    plt.tight_layout()
+    plt.show()
 
 def main():
     # Simple program to calculate optimal home battery size for a given power consumption
@@ -202,7 +259,8 @@ def main():
     parser.add_argument('--hnc', default='sensor.electricity_meter_power_consumption', help='Index name for sensor consumption values')
     parser.add_argument('--history-prices', default=str(Path.cwd() / 'history_prices.csv'), help='Data file containing historical dynamic prices')
     parser.add_argument('--pp', default='prijs_excl_belastingen', help='Index name for prices')
-    parser.add_argument('--filter', type=str, default=None, help='Execute filter query on dataset. Example: --filter "`type==\'vast\' & name!=\'Oxxio 1 jaar\'"`. Exact syntax: https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.query.html')
+    parser.add_argument('--filter', type=str, default=None, help='Execute filter query on house dataset. Example: --filter "`type==\'vast\' & name!=\'Oxxio 1 jaar\'"`. Exact syntax: https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.query.html')
+
     args = parser.parse_args()
 
     df = pd.read_csv(args.history_house, comment='#')
@@ -224,8 +282,6 @@ def main():
     prices.index = prices.index.strftime('%Y-%m-%dT%H:%M:%S.000Z')
     df = df.merge(prices, left_index=True, right_index=True,  how='left') # with this trick: hourly prices are added to the main df, using left join. If there is no hit for the measured time in 'df', then a NaN is filled in.
 
-
-
     print(f'Number of datapoints: {len(df.index)}')
     if args.filter:
         df.query(args.filter, inplace=True)
@@ -240,37 +296,20 @@ def main():
     printst(sim_df, *houseargs)
     printcmp(df, *houseargs, sim_df, *houseargs)
 
-    print()
-    print('Case 1b: no overflow, 10kWh battery, 5kW inverter unit.')
-    sim_df = simulate_battery(df, *houseargs, capacity_kwh=10, inverter_limit_kw=5, min_pct=0.20, max_pct=0.80, discard_overflow=True)
-    printst(sim_df, *houseargs)
-    printcmp(df, *houseargs, sim_df, *houseargs)
+    # print()
+    # print('Case 1b: no overflow, 10kWh battery, 5kW inverter unit.')
+    # sim_df = simulate_battery(df, *houseargs, capacity_kwh=10, inverter_limit_kw=5, min_pct=0.20, max_pct=0.80, discard_overflow=True)
+    # printst(sim_df, *houseargs)
+    # printcmp(df, *houseargs, sim_df, *houseargs)
 
-    print()
-    print('Case 1c: with overflow, 5kWh battery, 5kW inverter unit.')
-    sim_df = simulate_battery(df, *houseargs, capacity_kwh=5, inverter_limit_kw=5, min_pct=0.20, max_pct=0.80, discard_overflow=False)
-    printst(sim_df, *houseargs)
-    printcmp(df, *houseargs, sim_df, *houseargs)
+    # print()
+    # print('Case 1c: with overflow, 5kWh battery, 5kW inverter unit.')
+    # sim_df = simulate_battery(df, *houseargs, capacity_kwh=5, inverter_limit_kw=5, min_pct=0.20, max_pct=0.80, discard_overflow=False)
+    # printst(sim_df, *houseargs)
+    # printcmp(df, *houseargs, sim_df, *houseargs)
 
-    # next steps:
-    # 1. make a function to compute costs for dynamic contracts for 1 year of data (use historical data from jeroen.nl)
-    # 2. consult current contract offers on the market (both price-fixed for 1-3 years and dynamic)
-    # 3. create a function to compare and find the best contract offer for a given year of house consumption/production
-    # 4. use covariance matrix to create many years of input data (house consumption/production), and compute in how many percent of the cases which contract would be better
-    # 5. Add measures (battery optimization, disallowing any power to be returned to the grid, buying power for the battery when price is low) to compare with.
+    plot_battery(df, *houseargs)
     return
-    # mean_vector contains the usage/generation estimations.
-    # mean_vector = np.array([profile['gas'], profile['power_low'], profile['power_high'], profile['power_gen_low'], profile['power_gen_high']])
-
-    # computes gross need (i.e. amount of power that the house needs in total, from whatever source)
-    # need = (df[args.p] - df[args.np]).clip(lower=0.0) + df[args.nc]
-
-    # sufficiency: factor between 0-1, with 0 is 'total grid dependency' and 1 is 'no net needed' for a given hour
-    # sufficiency = (1.0 - df[args.nc]/need).clip(upper=1.0)
-    # 4. OVERRIDE: If export is more than grid import, 100% self-sufficient (handles np > p misreadings/battery exports)
-    # sufficiency.loc[df[args.np] > df[args.nc]] = 1.0
-
-    # print(sufficiency.to_string())
 
     if not 'covariance_matrix' in profile: # No statistics -> just simple computing
         gas, power = best_offer(df, mean_vector, args.saldering, args.outage)

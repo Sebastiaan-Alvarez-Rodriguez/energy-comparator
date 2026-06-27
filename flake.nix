@@ -10,6 +10,7 @@
       };
 
       buildPythonPackages = pkgs.python314Packages;
+      neededPackages = [ buildPythonPackages.numpy buildPythonPackages.pandas buildPythonPackages.scipy buildPythonPackages.matplotlib ];
 
       # Our build
       energy-comparator = buildPythonPackages.buildPythonApplication {
@@ -22,7 +23,7 @@
         };
         src = ./.;
 
-        propagatedBuildInputs = [ buildPythonPackages.numpy buildPythonPackages.pandas buildPythonPackages.scipy ];
+        propagatedBuildInputs = neededPackages;
 
         # By default tests are executed, but we don't want to.
         dontUseSetuptoolsCheck = true;
@@ -33,7 +34,7 @@
       };
       packages.default = energy-comparator;
       devShells.default = pkgs.mkShell rec {
-        packages = [ buildPythonPackages.numpy buildPythonPackages.pandas buildPythonPackages.scipy ];
+        packages = neededPackages;
       };
     }
   );
