@@ -114,128 +114,141 @@ def printst(df, p, np, nc):
 
 def printcmp(df1, p1, np1, nc1, df2, p2, np2, nc2):
     reduction_kwh = df1[nc1].sum() - df2[nc2].sum()
-    print(f'Overal energy consumption reduction: {reduction_kwh}kWh ({reduction_kwh / df1[nc1].sum() *100}%)')
+    reduction_pct = reduction_kwh/df1[nc1].sum()
+    print(f'Overal energy consumption reduction: {reduction_kwh}kWh ({reduction_pct *100}%)')
     overflow_kwh = df1[np1].sum() - df2[np2].sum()
-    print(f'Overal energy overflowing reduction: {overflow_kwh}kWh ({overflow_kwh / df1[np1].sum() *100}%)')
+    overflow_pct = overflow_kwh/df1[np1].sum()
+    print(f'Overal energy overflowing reduction: {overflow_kwh}kWh ({overflow_pct*100}%)')
+    return reduction_kwh, reduction_pct, overflow_kwh, overflow_pct
 
-# helper function for parallel processing
-def run_single_simulation(inv, cap, df, p_col, np_col, nc_col, min_pct, max_pct, discard_overflow):
-    sim = simulate_battery(df, p_col, np_col, nc_col, capacity_kwh=cap, inverter_limit_kw=inv, min_pct=min_pct, max_pct=max_pct, discard_overflow=discard_overflow)
-    # Calculate metrics in one place
-    np_sum = sim[np_col].sum()
+def summarize_simulation(inv, cap, df, p_col, np_col, nc_col, min_pct, max_pct, discard_overflow):
+    '''summarizes a simulation outcome to its most important values'''
+    np_sum = df[np_col].sum()
     return {
-        "Inverter": inv,
-        "Capacity": cap,
-        "NC_Sum": sim[nc_col].sum(),
-        "NP_Sum": np_sum,
-        "P_NP_Diff": sim[p_col].sum() - np_sum
+        'inverter': inv,
+        'capacity': cap,
+        'min_pct': min_pct,
+        'max_pct': max_pct,
+        'discard_overflow': discard_overflow,
+        'nc_sum': df[nc_col].sum(),
+        'np_sum': np_sum,
+        'p_np_diff': df[p_col].sum() - np_sum
     }
+    
+def run_single_simulation(inv, cap, df, p_col, np_col, nc_col, min_pct, max_pct, discard_overflow):
+    '''helper function for parallel processing'''
+    sim = simulate_battery(df, p_col, np_col, nc_col, capacity_kwh=cap, inverter_limit_kw=inv, min_pct=min_pct, max_pct=max_pct, discard_overflow=discard_overflow)
+    return summarize_simulation(inv, cap, sim, p_col, np_col, nc_col, min_pct, max_pct, discard_overflow)
 
+def run_simulations(inverters, capacities, *args, **kwargs):
+    '''
+    Runs multiple simulations and returns the result as a pandas dataframe.
 
-def plot_battery(df, p_col, np_col, nc_col, min_pct=0.20, max_pct=0.80, discard_overflow=False):
-    capacities = [x*0.5 for x in range (0, 61)]
-    inverters = [1, 2, 5, 10]
-    inverter_colors = {
-        1: "#1f77b4",   # Muted Blue
-        2: "#ff7f0e",   # Safety Orange
-        5: "#2ca02c",   # Grass Green
-        10: "#9467bd"   # Deep Purple
-    }
-    metric_styles = {
-        "NC_Sum": {"style": "-", "label": "grid-consumption"},
-        "NP_Sum": {"style": "--", "label": "grid-production"},
-        # "P_NP_Diff": {"style": ":", "label": "P-NP Diff"}
-    }
-    x_offsets = {1: -0.15, 2: -0.05, 5: 0.05, 10: 0.15}
-
+    Parameters:
+    - inverters: list of battery inverter max rating in kW, e.g. [1, 3, 5]
+    - capacities: list of battery capacities in kWh, e.g. [2.5, 5, 10]
+    All other args can be spotted at 'run_single_simulation' function (except inv and cap, which are provided here)
+    '''
     # ProcessPoolExecutor automatically uses all available CPU cores
     with ProcessPoolExecutor() as executor:
         futures = [ # Submit all tasks to the queue
-            executor.submit(run_single_simulation, inv, cap, df, p_col, np_col, nc_col, min_pct, max_pct, discard_overflow ) for inv, cap in itertools.product(inverters, capacities)
+            executor.submit(run_single_simulation, inv, cap, *args, **kwargs) for inv, cap in itertools.product(inverters, capacities)
         ]
         results = [f.result() for f in futures]
-    outputs_df = pd.DataFrame(results)
+    return pd.DataFrame(results)
 
-
-
+def plot_battery_cap(outputs_df, df, p_col, np_col, nc_col, min_pct=0.20, max_pct=0.80, discard_overflow=False):
+    # plot battery capacity vs amount of kWh saved.
+    inverter_colors = {
+        1: '#1f77b4',   # Muted Blue
+        2: '#ff7f0e',   # Safety Orange
+        5: '#2ca02c',   # Grass Green
+        10: '#9467bd'   # Deep Purple
+    }
+    metric_styles = {
+        'nc_sum': {'style': '-', 'label': 'grid-consumption'},
+        'np_sum': {'style': '--', 'label': 'grid-production'},
+        "p_np_diff": {"style": ":", "label": "self-consumption"}
+    }
+    x_offsets = {1: -0.15, 2: -0.05, 5: 0.05, 10: 0.15}
 
     plt.figure(figsize=(8, 5))
-    for inv, group in outputs_df.groupby("Inverter"):
-        color = inverter_colors.get(inv, "gray") # Fallback color if size changes
+    for inv, group in outputs_df.groupby('inverter'):
+        color = inverter_colors.get(inv, 'gray') # Fallback color if size changes
         offset = x_offsets.get(int(inv), 0)
-        shifted_capacity = group["Capacity"] + offset
+        shifted_capacity = group['capacity'] + offset
         for col, info in metric_styles.items():
             plt.plot(
                 shifted_capacity, 
                 group[col], 
                 color=color, 
-                linestyle=info["style"], 
+                linestyle=info['style'], 
                 linewidth=2
             )
 
     # Construct a two-part custom legend to avoid a messy 12-item list
     legend_elements = (
-        [plt.Line2D([0], [0], color=c, lw=3, label=f"Inverter {k} kW") for k, c in inverter_colors.items()] +
-        [plt.Line2D([0], [0], color="gray", ls=s["style"], lw=2, label=s["label"]) for s in metric_styles.values()]
+        [plt.Line2D([0], [0], color=c, lw=3, label=f'Inverter {k} kW') for k, c in inverter_colors.items()] +
+        [plt.Line2D([0], [0], color='gray', ls=s['style'], lw=2, label=s['label']) for s in metric_styles.values()]
     )
 
     # Figure layout styling
-    plt.title("Battery Simulation: Grouped by Inverter Size", fontsize=14, pad=15, fontweight='bold')
-    plt.xlabel("Capacity (kWh)", fontsize=11, labelpad=10)
-    plt.ylabel("Energy (kWh)", fontsize=11, labelpad=10)
-    plt.grid(True, linestyle="--", alpha=0.4, color="gray")
+    plt.title('Battery Simulation: Grouped by Inverter Size', fontsize=14, pad=15, fontweight='bold')
+    plt.xlabel('Capacity (kWh)', fontsize=11, labelpad=10)
+    plt.ylabel('Energy (kWh)', fontsize=11, labelpad=10)
+    plt.grid(True, linestyle='--', alpha=0.4, color='gray')
 
     # Place the clean 7-item legend
-    plt.legend(handles=legend_elements, loc="upper left", frameon=True, facecolor="white", edgecolor="none")
+    plt.legend(handles=legend_elements, loc='upper left', frameon=True, facecolor='white', edgecolor='none')
 
     plt.tight_layout()
     plt.show()
     
-    # next we create a barplot showing the gain as compared to doing nothing
+def plot_battery_rel_gain(outputs_df, inv, df, p_col, np_col, nc_col, min_pct=0.20, max_pct=0.80, discard_overflow=False):
+    # create a barplot showing the gain as compared to doing nothing
     nc_base = df[nc_col].sum()
     np_base = df[np_col].sum()
 
     # Generate a bar plot for the 5kw inverter size
-    inv = 5
-    group = outputs_df[outputs_df['Inverter'] == inv]
-    # for inv, group in outputs_df.groupby("Inverter"):
-        # Ensure data is sorted by capacity for accurate "previous" calculations
-    group = group.sort_values("Capacity").copy()
+    group = outputs_df[outputs_df['inverter'] == inv]
+    # for inv, group in outputs_df.groupby('Inverter'):
+        # Ensure data is sorted by capacity for accurate 'previous' calculations
+    group = group.sort_values('capacity').copy()
 
     # Calculate Bar 1 & 3: Reduction compared to 0 kWh baseline
-    group["NC_Red_Base"] = ((nc_base - group["NC_Sum"]) / nc_base) * 100
-    group["NP_Red_Base"] = ((np_base - group["NP_Sum"]) / np_base) * 100
+    group['nc_red_base'] = ((nc_base - group['nc_Sum']) / nc_base) * 100
+    group['np_red_base'] = ((np_base - group['np_Sum']) / np_base) * 100
 
     # Calculate Bar 2 & 4: Reduction compared to the previous capacity step
     # (Using shift() to get the previous row's value; first row defaults to 0)
-    group["NC_Red_Prev"] = ((group["NC_Sum"].shift(1) - group["NC_Sum"]) / group["NC_Sum"].shift(1)).fillna(0) * 100
-    group["NP_Red_Prev"] = ((group["NP_Sum"].shift(1) - group["NP_Sum"]) / group["NP_Sum"].shift(1)).fillna(0) * 100
+    group['nc_Red_Prev'] = ((group['nc_Sum'].shift(1) - group['nc_Sum']) / group['nc_Sum'].shift(1)).fillna(0) * 100
+    group['np_Red_Prev'] = ((group['np_Sum'].shift(1) - group['np_Sum']) / group['np_Sum'].shift(1)).fillna(0) * 100
 
     plt.figure(figsize=(14, 6))
 
-    capacities_list = group["Capacity"].values
+    capacities_list = group['capacity'].values
     x = np.arange(len(capacities_list))  # Label locations
     width = 0.18                         # Width of each individual bar
 
-    bar1 = plt.bar(x - 1.5 * width, group["NC_Red_Base"], width, label="NC vs 0kWh (Total Drop)", color="#2ca02c")
-    bar2 = plt.bar(x - 0.5 * width, group["NC_Red_Prev"], width, label="NC vs Prev Step (Marginal)", color="#98df8a")
-    bar3 = plt.bar(x + 0.5 * width, group["NP_Red_Base"], width, label="NP vs 0kWh (Total Drop)", color="#1f77b4")
-    bar4 = plt.bar(x + 1.5 * width, group["NP_Red_Prev"], width, label="NP vs Prev Step (Marginal)", color="#aec7e8")
+    bar1 = plt.bar(x - 1.5 * width, group['nc_red_base'], width, label='NC vs 0kWh (Total Drop)', color='#2ca02c')
+    bar2 = plt.bar(x - 0.5 * width, group['nc_red_prev'], width, label='NC vs Prev Step (Marginal)', color='#98df8a')
+    bar3 = plt.bar(x + 0.5 * width, group['np_red_base'], width, label='NP vs 0kWh (Total Drop)', color='#1f77b4')
+    bar4 = plt.bar(x + 1.5 * width, group['np_red_prev'], width, label='NP vs Prev Step (Marginal)', color='#aec7e8')
 
     # Add the text labels on top of Bar 2 and Bar 4
     # 'padding=3' spaces the text slightly above the bar; 'fontsize=8' ensures it fits the narrow width
     for bar in [bar1, bar2, bar3, bar4]:
         plt.gca().bar_label(
             bar, 
-            fmt="%.1f%%", 
+            fmt='%.1f%%', 
             rotation=90, 
             padding=3, 
             fontsize=8, 
-            color="#2c3e50"
+            color='#2c3e50'
         )
-    plt.title(f"Relative Energy Reduction Metrics - Inverter: {inv} kW", fontsize=14, pad=15, fontweight="bold")
-    plt.xlabel("Battery Capacity (kWh)", fontsize=11, labelpad=10)
-    plt.ylabel("Reduction (%)", fontsize=11, labelpad=10)
+    plt.title(f'Relative Energy Reduction Metrics - Inverter: {inv} kW', fontsize=14, pad=15, fontweight='bold')
+    plt.xlabel('Battery Capacity (kWh)', fontsize=11, labelpad=10)
+    plt.ylabel('Reduction (%)', fontsize=11, labelpad=10)
 
     # Map the X-axis tick marks back to the actual capacity numbers
     plt.xticks(x, capacities_list)
@@ -243,8 +256,8 @@ def plot_battery(df, p_col, np_col, nc_col, min_pct=0.20, max_pct=0.80, discard_
     # Append '%' sign to the Y-axis labels
     plt.gca().yaxis.set_major_formatter(plt.FuncFormatter(lambda y, _: f'{y:.1f}%'))
 
-    plt.grid(True, linestyle="--", alpha=0.3, axis="y")
-    plt.legend(loc="upper right", frameon=True, facecolor="white", edgecolor="none")
+    plt.grid(True, linestyle='--', alpha=0.3, axis='y')
+    plt.legend(loc='upper right', frameon=True, facecolor='white', edgecolor='none')
 
     plt.tight_layout()
     plt.show()
@@ -253,6 +266,7 @@ def main():
     # Simple program to calculate optimal home battery size for a given power consumption
     # all power related specs expected in kWh, or euro/kWh where applicable.
     parser = argparse.ArgumentParser()
+    parser.add_argument('--battery-plotter', type='store_true', help='If set, simulates several different battery configurations for a household')
     parser.add_argument('--history-house', default=str(Path.cwd() / 'history_house.csv'), help='Data file containing house historical gross production and grid consumption values.')
     parser.add_argument('--hp', default='sensor.solaredge_solar_power', help='Index name for sensor production values')
     parser.add_argument('--hnp', default='sensor.electricity_meter_power_production', help='Index name for sensor net production values (i.e. what is delivered back to the grid)')
@@ -287,14 +301,14 @@ def main():
         df.query(args.filter, inplace=True)
         print(f'Number of datapoints (post-filter): {len(df.index)}')
 
-    print('Base situation (no battery)')
-    printst(df, *houseargs)
+    # print('Base situation (no battery)')
+    # printst(df, *houseargs)
 
-    print()
-    print('Case 1a: with overflow, 10kWh battery, 5kW inverter unit.')
-    sim_df = simulate_battery(df, *houseargs, capacity_kwh=10, inverter_limit_kw=5, min_pct=0.20, max_pct=0.80, discard_overflow=False)
-    printst(sim_df, *houseargs)
-    printcmp(df, *houseargs, sim_df, *houseargs)
+    # print()
+    # print('Case 1a: with overflow, 10kWh battery, 5kW inverter unit.')
+    # sim_df = simulate_battery(df, *houseargs, capacity_kwh=10, inverter_limit_kw=5, min_pct=0.20, max_pct=0.80, discard_overflow=False)
+    # printst(sim_df, *houseargs)
+    # printcmp(df, *houseargs, sim_df, *houseargs)
 
     # print()
     # print('Case 1b: no overflow, 10kWh battery, 5kW inverter unit.')
@@ -308,25 +322,36 @@ def main():
     # printst(sim_df, *houseargs)
     # printcmp(df, *houseargs, sim_df, *houseargs)
 
-    plot_battery(df, *houseargs)
-    return
+    if args.battery_plotter:
+        capacities = [x*0.5 for x in range (0, 61)]
+        inverters = [1, 2, 5, 10]
+        outputs_df = run_simulations(inverters, capacities, df, *houseargs, min_pct=0.2, max_pct=0.8, discard_overflow=False)
+        plot_battery_cap(outputs_df, df, *houseargs)
+        plot_battery_rel_gain(outputs_df, 5, df, *houseargs)
 
-    if not 'covariance_matrix' in profile: # No statistics -> just simple computing
-        gas, power = best_offer(df, mean_vector, args.saldering, args.outage)
-        year_price = gas.total+power.total + args.extra_costs
-        print('No covariance matrix given - computing in exact mode.')
-        print(f'The best offer is for {year_price} euro per year, or {year_price/12} euro per month:')
-        print('Gas:')
-        print(gas)
-        print('Power:')
-        print(power)
-    else:
-        print('Covariance matrix given - computing in statistics mode.')
-        std_vector = profile['covariance_matrix'].diagonal()
-        if np.nan in std_vector or 0.0 in std_vector:
-            print('found at least one standard deviation to be 0 or unset. Defaulting to 0.1, indicating almost no variance (nonzero required for SVD algorithm matrix convergence).')
-            np.fill_diagonal(profile['covariance_matrix'], [v if v and v != 0.0 else 0.1 for v in std_vector])
-        find_minimal_function(df, mean_vector, profile['covariance_matrix'], args.saldering, args.outage)
+    print('Case 1a: no overflow, 5kWh battery, 5kW inverter unit.')
+    inv = 5
+    cap = 5
+    min_pct = 0
+    max_pct = 100
+    discard_overflow = True
+    # sim_df = run_single_simulation(inv, cap, df, *houseargs, min_pct, max_pct, discard_overflow)
+    sim_df = simulate_battery(df, *houseargs, capacity_kwh=cap, inverter_limit_kw=inv, min_pct=min_pct, max_pct=max_pct, discard_overflow=discard_overflow)
+    printst(sim_df, *houseargs)
+    reduction_kwh, reduction_pct, overflow_kwh, overflow_pct = printcmp(df, *houseargs, sim_df, *houseargs)
+    # 2 main options here:
+    # 1. calculate exact pricing for my data (less than 1 year of data available!) and assume the optimal contract is optimal for the full year
+    # 2. assume the percentage gains for my data applies to the entire year, and calculate the optimal contract for many generated sample years.
+    print('Assumptions')
+    print(f'\t- consumption reduction for total year: {reduction_pct}')
+    print(f'\t- overflowing reduction for total year: {overflow_pct}')
+    # option 2 chosen, because I think it is doing the better assumption.
+    # option 2 requires me to either
+    # 1. choose 1 cap-inv combo, find optimal contract
+    # 2. choose many cap-inv combos, find optimal contracts
+    # I will use my other python file for finding an optimal contract.
+    # contract_calculations(outputs_df)
+    return
 
 if __name__ == '__main__':
     main()

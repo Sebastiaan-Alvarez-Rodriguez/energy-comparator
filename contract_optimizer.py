@@ -71,6 +71,58 @@ def verify(df):
             ok = False
     return ok
 
+def best_offer_v2():
+    # Hypothesized Cost & Contract parameters (Replace with your actual data)
+    battery_cost_per_kwh = 400   # Cost per kWh of capacity
+    inverter_costs = {3: 800, 5: 1000, 6: 1200, 10: 1500} # Fixed hardware cost
+
+    # Contract 1: Flat rate
+    c1_import_price = 0.30       # €/kWh consumed
+    c1_export_price = 0.08       # €/kWh delivered back
+
+    # Contract 2: Time-of-Use (ToU) / Dynamic (Requires hourly profiles, but using an average here)
+    c2_import_price = 0.25
+    c2_export_price = 0.05
+
+    financial_outputs = []
+
+    # Loop through your simulation results to overlay financial realities
+    for idx, row in outputs_df.iterrows():
+        inv = row["Inverter"]
+        cap = row["Capacity"]
+        nc_sum = row["NC_Sum"]
+        np_sum = row["NP_Sum"]
+    
+        # 1. Total Investment Cost for this specific hardware configuration
+        total_capex = inverter_costs[inv] + (cap * battery_cost_per_kwh)
+    
+        # 2. Calculate Annual Energy Bill under Contract 1
+        # Bill = (What you buy * Import Price) - (What you sell * Export Price)
+        bill_with_battery_c1 = (nc_sum * c1_import_price) - (np_sum * c1_export_price)
+        bill_base_c1 = (nc_base * c1_import_price) - (np_base * c1_export_price)
+        annual_savings_c1 = bill_base_c1 - bill_with_battery_c1
+    
+        # 3. Calculate Annual Energy Bill under Contract 2
+        bill_with_battery_c2 = (nc_sum * c2_import_price) - (np_sum * c2_export_price)
+        bill_base_c2 = (nc_base * c2_import_price) - (np_base * c2_export_price)
+        annual_savings_c2 = bill_base_c2 - bill_with_battery_c2
+    
+        # 4. Calculate Simple Payback Periods (Years)
+        payback_c1 = total_capex / annual_savings_c1 if annual_savings_c1 > 0 else float('inf')
+        payback_c2 = total_capex / annual_savings_c2 if annual_savings_c2 > 0 else float('inf')
+    
+        financial_outputs.append({
+            "Inverter": inv,
+            "Capacity": cap,
+            "CapEx": total_capex,
+            "Savings_C1": annual_savings_c1,
+            "Payback_C1": payback_c1,
+            "Savings_C2": annual_savings_c2,
+            "Payback_C2": payback_c2
+        })
+
+    fin_df = pd.DataFrame(financial_outputs)
+
 
 def best_offer(df, mean_vector, saldering, outage):
     '''
