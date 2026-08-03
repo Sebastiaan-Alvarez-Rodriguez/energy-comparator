@@ -104,7 +104,7 @@ def best_offer(df, mean_vector):
     if power_gen_low + power_gen_high > 0:
         df['calc_power'] += df.powergen_cost_constant
 
-    df['total'] = df.calc_gas.fillna(0) + df.calc_power.fillna(0) - df.bonus.fillna(0)
+    df['total'] = df.calc_gas.fillna(0) + df.calc_power.fillna(0) - df.bonus.fillna(0) # seb TODO: Normalize bonus to 'by year' value!
 
     only_gas_mask = df.powerconstant.isna() & df.powervariable_low.isna() & df.powervariable_high.isna()
     only_power_mask = df.gasconstant.isna() & df.gasvariable.isna()
@@ -120,7 +120,7 @@ def best_offer(df, mean_vector):
     min_power_idx = only_power_df.loc[only_power_df.total.idxmin()] if not only_power_df.empty else None
 
     print(df.to_string())
-    if min_combined_idx != None:
+    if min_combined_idx is not None:
         return (min_gas_idx, min_power_idx) if min_combined_idx.total > (min_gas_idx.total + min_power_idx.total) else \
         pd.Series([min_combined_idx['name'], min_combined_idx.type, min_combined_idx.gasconstant, min_combined_idx.gasconstant_unit, min_combined_idx.gasvariable, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, min_combined_idx.bonus / 2, min_combined_idx.calc_gas, np.nan, min_combined_idx.total / 2], index=df.columns), \
         pd.Series([min_combined_idx['name'], min_combined_idx.type, np.nan, np.nan, np.nan, min_combined_idx.powerconstant, min_combined_idx.powerconstant_unit, min_combined_idx.powervariable_low, min_combined_idx.powervariable_high, min_combined_idx.powergen, min_combined_idx.powergen_cost_kwh, min_combined_idx.powergen_cost_constant, min_combined_idx.powergen_cost_constant_unit, min_combined_idx.bonus / 2, np.nan, min_combined_idx.calc_power, min_combined_idx.total / 2], index=df.columns)
@@ -139,7 +139,7 @@ def find_minimal_function(df, mean_vector, cov_matrix, samplesize=1000):
         if gas is None or power is None:
             print('[Warning] Not all of gas/power got an answer. Filtered too much data?')
             continue
-        gas_dict.setdefault(gas['name'], []).append(gas.total) # seb TODO: gas is just an idx here, fetch row from df
+        gas_dict.setdefault(gas['name'], []).append(gas.total)
         power_dict.setdefault(power['name'], []).append(power.total)
     for k, v in gas_dict.items():
         gas_dict[k] = (len(v), np.mean(v))
@@ -188,7 +188,7 @@ def main():
 
     if not 'covariance_matrix' in profile: # No statistics -> just simple computing
         gas, power = best_offer(df, mean_vector)
-        if not (gas and power):
+        if gas is None or power is None:
             print('[Warning] Not all of gas/power got an answer. Filtered too much data?')
         year_price = gas.total+power.total + args.extra_costs
         print('No covariance matrix given - computing in exact mode.')
