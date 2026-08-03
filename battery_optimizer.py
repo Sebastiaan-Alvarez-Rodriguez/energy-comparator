@@ -266,7 +266,7 @@ def main():
     # Simple program to calculate optimal home battery size for a given power consumption
     # all power related specs expected in kWh, or euro/kWh where applicable.
     parser = argparse.ArgumentParser()
-    parser.add_argument('--battery-plotter', type='store_true', help='If set, simulates several different battery configurations for a household')
+    parser.add_argument('--battery-plotter', action='store_true', help='If set, simulates several different battery configurations for a household')
     parser.add_argument('--history-house', default=str(Path.cwd() / 'history_house.csv'), help='Data file containing house historical gross production and grid consumption values.')
     parser.add_argument('--hp', default='sensor.solaredge_solar_power', help='Index name for sensor production values')
     parser.add_argument('--hnp', default='sensor.electricity_meter_power_production', help='Index name for sensor net production values (i.e. what is delivered back to the grid)')
@@ -301,26 +301,8 @@ def main():
         df.query(args.filter, inplace=True)
         print(f'Number of datapoints (post-filter): {len(df.index)}')
 
-    # print('Base situation (no battery)')
-    # printst(df, *houseargs)
-
-    # print()
-    # print('Case 1a: with overflow, 10kWh battery, 5kW inverter unit.')
-    # sim_df = simulate_battery(df, *houseargs, capacity_kwh=10, inverter_limit_kw=5, min_pct=0.20, max_pct=0.80, discard_overflow=False)
-    # printst(sim_df, *houseargs)
-    # printcmp(df, *houseargs, sim_df, *houseargs)
-
-    # print()
-    # print('Case 1b: no overflow, 10kWh battery, 5kW inverter unit.')
-    # sim_df = simulate_battery(df, *houseargs, capacity_kwh=10, inverter_limit_kw=5, min_pct=0.20, max_pct=0.80, discard_overflow=True)
-    # printst(sim_df, *houseargs)
-    # printcmp(df, *houseargs, sim_df, *houseargs)
-
-    # print()
-    # print('Case 1c: with overflow, 5kWh battery, 5kW inverter unit.')
-    # sim_df = simulate_battery(df, *houseargs, capacity_kwh=5, inverter_limit_kw=5, min_pct=0.20, max_pct=0.80, discard_overflow=False)
-    # printst(sim_df, *houseargs)
-    # printcmp(df, *houseargs, sim_df, *houseargs)
+    print('Base situation (no battery)')
+    printst(df, *houseargs)
 
     if args.battery_plotter:
         capacities = [x*0.5 for x in range (0, 61)]
@@ -342,7 +324,8 @@ def main():
     # 2 main options here:
     # 1. calculate exact pricing for my data (less than 1 year of data available!) and assume the optimal contract is optimal for the full year
     # 2. assume the percentage gains for my data applies to the entire year, and calculate the optimal contract for many generated sample years.
-    print('Assumptions')
+    print()
+    print('Assumptions for cost-basis analysis')
     print(f'\t- consumption reduction for total year: {reduction_pct}')
     print(f'\t- overflowing reduction for total year: {overflow_pct}')
     # option 2 chosen, because I think it is doing the better assumption.

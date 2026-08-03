@@ -1,4 +1,4 @@
-name,type,powerconstant,powerconstant_unit,powervariable_low,powervariable_high,powergen,powergen_cost_kwh,powergen_cost_constant,bonus
-budget thuis 3 jaar vast (independer),vast,8.99,month,0.24103,0.24103,0.05379,0.03629,0,0
-united consumers 3 jaar vast (independer),vast,8.56,month,0.22034,0.26500,0.10812,0.10312,0,240
-united consumers 1 jaar vast (independer),vast,8.70,month,0.23510,0.28010,0.12642,0.12142,0,190
+name,type,gasconstant,gasconstant_unit,gasvariable,powerconstant,powerconstant_unit,powervariable_low,powervariable_high,powergen,powergen_cost_kwh,powergen_cost_constant,powergen_cost_constant_unit,bonus
+budget thuis 3 jaar vast (independer),vast,,,,8.99,month,0.24103,0.24103,0.05379,0.03629,0,,0
+united consumers 3 jaar vast (independer),vast,,,,8.56,month,0.22034,0.26500,0.10812,0.10312,0,,240
+united consumers 1 jaar vast (independer),vast,,,,8.70,month,0.23510,0.28010,0.12642,0.12142,0,,190

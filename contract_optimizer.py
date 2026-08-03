@@ -7,7 +7,7 @@ import pandas as pd
 from scipy.stats import multivariate_normal
 
 
-required_csv_names = ['name','type','gasconstant','gasconstant_unit','gasvariable','powerconstant','powerconstant_unit','powervariable_low','powervariable_high','powergen_low','powergen_high','bonus']
+required_csv_names = ['name','type','gasconstant','gasconstant_unit','gasvariable','powerconstant','powerconstant_unit','powervariable_low','powervariable_high','powergen','powergen_cost_kwh','powergen_cost_constant', 'powergen_cost_constant_unit', 'bonus']
 
 def set_if_not_null(d, key, value):
     if value:
@@ -40,16 +40,32 @@ def get_profile(path=None, profile_covariance_matrix=None, profile_gas=None, pro
 
 def normalize(df):
     # normalizes data units to year basis
-    power_month_mask = df.powerconstant_unit == 'month'
-    df['powerconstant'] = df.powerconstant * 12 * power_month_mask + df.powerconstant * (~power_month_mask)
-    power_day_mask = df.powerconstant_unit == 'day'
-    df['powerconstant'] = df.powerconstant * 12 * power_day_mask + df.powerconstant * (~power_day_mask)
-    df['powerconstant_unit'] = 'year'
-    gas_month_mask = df.gasconstant_unit == 'month'
-    df['gasconstant'] = df.gasconstant * 12 * gas_month_mask + df.gasconstant * (~gas_month_mask)
-    gas_day_mask = df.gasconstant_unit == 'day'
-    df['gasconstant'] = df.gasconstant * 12 * gas_day_mask + df.gasconstant * (~gas_day_mask)
-    df['gasconstant_unit'] = 'year'
+    def inline_normalize(name):
+        unit = name + '_unit' # e.g. powerconstant --> powerconstant_unit
+        month_mask = df[unit] == 'month'
+        day_mask = df[unit] == 'day'
+        df[name] = df[name] * month_mask * 12 + df[name] * day_mask * 365 + df[name] * (~month_mask & ~day_mask)
+        df[unit] = 'year'
+    inline_normalize('powerconstant')
+    inline_normalize('powergen_cost_constant')
+    inline_normalize('gasconstant')
+    # power_month_mask = df.powerconstant_unit == 'month'
+    # df['powerconstant'] = df.powerconstant * 12 * power_month_mask + df.powerconstant * (~power_month_mask)
+    # power_day_mask = df.powerconstant_unit == 'day'
+    # df['powerconstant'] = df.powerconstant * 12 * power_day_mask + df.powerconstant * (~power_day_mask)
+    # df['powerconstant_unit'] = 'year'
+
+    # powergen_cost_month_mask = df.powergen_cost_constant_unit == 'month'
+    # df['powergen_cost_constant'] = df.powergen_cost_constant * 12 * powergen_cost_month_mask + df.powergen_cost_constant * (~powergen_cost_month_mask )
+    # powergen_cost_day_mask = df.powergen_cost_constant_unit  == 'day'
+    # df['powergen_cost_constant'] = df.powergen_cost_constant * 12 * powergen_cost_day_mask + df.powergen_cost_constant * (~powergen_cost_day_mask )
+    # df['powergen_cost_constant_unit'] = 'year'
+
+    # gas_month_mask = df.gasconstant_unit == 'month'
+    # df['gasconstant'] = df.gasconstant * 12 * gas_month_mask + df.gasconstant * (~gas_month_mask)
+    # gas_day_mask = df.gasconstant_unit == 'day'
+    # df['gasconstant'] = df.gasconstant * 12 * gas_day_mask + df.gasconstant * (~gas_day_mask)
+    # df['gasconstant_unit'] = 'year'
     return df
 
 
@@ -65,83 +81,30 @@ def verify(df):
         if any(gas_vars) and not all(gas_vars):
             print(f'[Error] Data entry at line {idx} ("{entry["name"]}") is incorrect: Contains some, but not all of "gasconstant", "gasconstant_unit", "gasvariable". Specified: {gas_vars}')
             ok = False
-        power_vars = [x != 0 and not pd.isna(x) for x in [entry.iloc[5], entry.iloc[7], entry.iloc[8], entry.iloc[9], entry.iloc[10]]]
+        power_vars = [x != 0 and not pd.isna(x) for x in [entry.iloc[5], entry.iloc[7], entry.iloc[8], entry.iloc[9]]]
         if any(power_vars) and not all(power_vars):
-            print(f'[Error] Data entry at line {idx} ("{entry["name"]}") is incorrect: Contains some, but not all of "powerconstant", "powerconstant_unit", "powervariable_low", "powervariable_high", "powergen_low", "powergen_high". Specified: {power_vars}')
+            print(f'[Error] Data entry at line {idx} ("{entry["name"]}") is incorrect: Contains some, but not all of "powerconstant", "powerconstant_unit", "powervariable_low", "powervariable_high", "powergen". Specified: {power_vars}')
             ok = False
     return ok
 
-def best_offer_v2():
-    # Hypothesized Cost & Contract parameters (Replace with your actual data)
-    battery_cost_per_kwh = 400   # Cost per kWh of capacity
-    inverter_costs = {3: 800, 5: 1000, 6: 1200, 10: 1500} # Fixed hardware cost
 
-    # Contract 1: Flat rate
-    c1_import_price = 0.30       # €/kWh consumed
-    c1_export_price = 0.08       # €/kWh delivered back
+def combined_best(combined, gas_only, power_only):
+    return combined != None and combined.total <= (gas_only.total + power_only.total)
 
-    # Contract 2: Time-of-Use (ToU) / Dynamic (Requires hourly profiles, but using an average here)
-    c2_import_price = 0.25
-    c2_export_price = 0.05
-
-    financial_outputs = []
-
-    # Loop through your simulation results to overlay financial realities
-    for idx, row in outputs_df.iterrows():
-        inv = row["Inverter"]
-        cap = row["Capacity"]
-        nc_sum = row["NC_Sum"]
-        np_sum = row["NP_Sum"]
-    
-        # 1. Total Investment Cost for this specific hardware configuration
-        total_capex = inverter_costs[inv] + (cap * battery_cost_per_kwh)
-    
-        # 2. Calculate Annual Energy Bill under Contract 1
-        # Bill = (What you buy * Import Price) - (What you sell * Export Price)
-        bill_with_battery_c1 = (nc_sum * c1_import_price) - (np_sum * c1_export_price)
-        bill_base_c1 = (nc_base * c1_import_price) - (np_base * c1_export_price)
-        annual_savings_c1 = bill_base_c1 - bill_with_battery_c1
-    
-        # 3. Calculate Annual Energy Bill under Contract 2
-        bill_with_battery_c2 = (nc_sum * c2_import_price) - (np_sum * c2_export_price)
-        bill_base_c2 = (nc_base * c2_import_price) - (np_base * c2_export_price)
-        annual_savings_c2 = bill_base_c2 - bill_with_battery_c2
-    
-        # 4. Calculate Simple Payback Periods (Years)
-        payback_c1 = total_capex / annual_savings_c1 if annual_savings_c1 > 0 else float('inf')
-        payback_c2 = total_capex / annual_savings_c2 if annual_savings_c2 > 0 else float('inf')
-    
-        financial_outputs.append({
-            "Inverter": inv,
-            "Capacity": cap,
-            "CapEx": total_capex,
-            "Savings_C1": annual_savings_c1,
-            "Payback_C1": payback_c1,
-            "Savings_C2": annual_savings_c2,
-            "Payback_C2": payback_c2
-        })
-
-    fin_df = pd.DataFrame(financial_outputs)
-
-
-def best_offer(df, mean_vector, saldering, outage):
+def best_offer(df, mean_vector):
     '''
     Calculates the best contract for power and gas. Considers both combined and separate contracts.
     :param df Dataframe of contracts.
     :param mean_vector Vector containing estimated gas, power_low, power_high, power_generation_low, power_generation_high.
-    :param saldering Percentage of power generated that can be subtracted from power usage, between 0 and 1.
-    :param outage Expected Percentage of reduction in generated power due to the net turning off the supply.
     :return a (Pandas.Series, Pandas.Series) containing: the cheapest contract row for gas, cheapest contract for power.
     '''
     gas, power_low, power_high, power_gen_low, power_gen_high = mean_vector
     df['calc_gas'] = df.gasconstant + gas * df.gasvariable
-    expected_low = power_low-(power_gen_low*saldering*outage)
-    expected_high = power_high-(power_gen_high*saldering*outage)
-    df['calc_power'] = df.powerconstant + \
-        (expected_low * df.powervariable_low if expected_low > 0 else expected_low * df.powergen_low) + \
-        (expected_high * df.powervariable_high if expected_high > 0 else expected_high * df.powergen_high) 
+    df['calc_power'] = df.powerconstant + df.powervariable_low*power_low + df.powervariable_high*power_high - df.powergen*(power_gen_low+power_gen_high) + df.powergen_cost_kwh*(power_gen_low+power_gen_high)
+    if power_gen_low + power_gen_high > 0:
+        df['calc_power'] += df.powergen_cost_constant
 
-    df['total'] = df.calc_gas.fillna(0) + df.calc_power.fillna(0) + df.bonus.fillna(0)
+    df['total'] = df.calc_gas.fillna(0) + df.calc_power.fillna(0) - df.bonus.fillna(0)
 
     only_gas_mask = df.powerconstant.isna() & df.powervariable_low.isna() & df.powervariable_high.isna()
     only_power_mask = df.gasconstant.isna() & df.gasvariable.isna()
@@ -155,31 +118,28 @@ def best_offer(df, mean_vector, saldering, outage):
 
     only_power_df = df[only_power_mask]
     min_power_idx = only_power_df.loc[only_power_df.total.idxmin()] if not only_power_df.empty else None
-    # print(f'individual gas: {min_gas_idx}')
-    # print(f'individual power idx: {min_power_idx}')
-    if min_combined_idx is None:
-        if min_gas_idx is None or min_power_idx is None:
-            return None, None
-        return min_gas_idx, min_power_idx
-    if min_gas_idx is None or min_power_idx is None or min_combined_idx.total <= min_power_idx.total + min_gas_idx.total:
-        return pd.Series([min_combined_idx['name'], min_combined_idx.type, min_combined_idx.gasconstant, min_combined_idx.gasconstant_unit, min_combined_idx.gasvariable, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, min_combined_idx.bonus / 2, min_combined_idx.calc_gas, np.nan, min_combined_idx.total / 2], index=df.columns), \
-        pd.Series([min_combined_idx['name'], min_combined_idx.type, np.nan, np.nan, np.nan, min_combined_idx.powerconstant, min_combined_idx.powerconstant_unit, min_combined_idx.powervariable_low, min_combined_idx.powervariable_high, min_combined_idx.powergen_low, min_combined_idx.powergen_high, min_combined_idx.bonus / 2, np.nan, min_combined_idx.calc_power, min_combined_idx.total / 2], index=df.columns)
-    return min_gas_idx, min_power_idx
+
+    print(df.to_string())
+    if min_combined_idx != None:
+        return (min_gas_idx, min_power_idx) if min_combined_idx.total > (min_gas_idx.total + min_power_idx.total) else \
+        pd.Series([min_combined_idx['name'], min_combined_idx.type, min_combined_idx.gasconstant, min_combined_idx.gasconstant_unit, min_combined_idx.gasvariable, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, np.nan, min_combined_idx.bonus / 2, min_combined_idx.calc_gas, np.nan, min_combined_idx.total / 2], index=df.columns), \
+        pd.Series([min_combined_idx['name'], min_combined_idx.type, np.nan, np.nan, np.nan, min_combined_idx.powerconstant, min_combined_idx.powerconstant_unit, min_combined_idx.powervariable_low, min_combined_idx.powervariable_high, min_combined_idx.powergen, min_combined_idx.powergen_cost_kwh, min_combined_idx.powergen_cost_constant, min_combined_idx.powergen_cost_constant_unit, min_combined_idx.bonus / 2, np.nan, min_combined_idx.calc_power, min_combined_idx.total / 2], index=df.columns)
+    return (min_gas_idx, min_power_idx)
 
 
-def find_minimal_function(df, mean_vector, cov_matrix, saldering, outage, samplesize=1000):
+def find_minimal_function(df, mean_vector, cov_matrix, samplesize=1000):
     # Find the linear function with the highest probability for each set of mean and covariance
     gas_dict = {}
     power_dict = {}
-    linear_func = functools.partial(best_offer, df, saldering=saldering, outage=outage)
+    linear_func = functools.partial(best_offer, df)
     inputs = np.random.multivariate_normal(mean_vector, cov_matrix, samplesize)
     outputs = [linear_func(sample) for sample in inputs]
 
-    for gas, power in outputs:
+    for combined, gas, power in outputs:
         if gas is None or power is None:
-            print('[Warning] found no winner. Filtered too much data?')
+            print('[Warning] Not all of gas/power got an answer. Filtered too much data?')
             continue
-        gas_dict.setdefault(gas['name'], []).append(gas.total)
+        gas_dict.setdefault(gas['name'], []).append(gas.total) # seb TODO: gas is just an idx here, fetch row from df
         power_dict.setdefault(power['name'], []).append(power.total)
     for k, v in gas_dict.items():
         gas_dict[k] = (len(v), np.mean(v))
@@ -201,7 +161,7 @@ Combined: {gas_dict[best_gas][1] + power_dict[best_power][1]}/yr
 def main():
     # Simple program to calculate normalized cost for power & gas grid connections.
     parser = argparse.ArgumentParser()
-    parser.add_argument('--offers', default=str(Path.cwd() / 'offers.csv'), help='Data file containing offers.')
+    parser.add_argument('--contracts', default=str(Path.cwd() / 'contract.csv'), help='Data file containing possible contracts.')
     parser.add_argument('--profile', default=None, help='Data file containing usage and generation data.')
     parser.add_argument('--covariance-matrix', default=None, help='Set the 5x5 covariance matrix. Relations to denote: gas, power-low, power-high, power-generation-low, power-generation-high. Of course, the diagonal entries are standard deviations and the non-diagonal entries provide pairwise covariance. should look like json: i.e. `[ [60,0,0,0,0], [0,60,0,0,0], [0,0,60,0,0], [0,0,0,60,0], [0,0,0,0,60] ]`. Use only if you know what you are doing.')
     parser.add_argument('--gas', type=float, default=None, help='Average yearly gas consumption. Takes precedence over file-based data.')
@@ -209,26 +169,27 @@ def main():
     parser.add_argument('--power-high', type=float, default=None, help='Average yearly power consumption (high tarif). Takes precedence over file-based data.')
     parser.add_argument('--power-gen-low', type=float, default=None, help='Average yearly power generation (low tarif). Takes precedence over file-based data.')
     parser.add_argument('--power-gen-high', type=float, default=None, help='Average yearly power generation (high tarif). Takes precedence over file-based data.')
-    parser.add_argument('--saldering', type=float, default=1.0, help='Saldering assumption, determines how much generated energy compensates for consumed energy (factor between 0 and 1).')
-    parser.add_argument('--outage', type=float, default=1.0, help='Outage assumption, describes when the sun shines but the net is satisfied, leading to no power delivery on the net (factor between 0 and 1).')
     parser.add_argument('--extra-costs', type=float, default=0.0, help='Extra: Other costs, can be negative to denote government aid.')
     parser.add_argument('--filter', type=str, default=None, help='Execute filter query on dataset. Example: --filter "`type==\'vast\' & name!=\'Oxxio 1 jaar\'"`. Exact syntax: https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.query.html')
     args = parser.parse_args()
 
     profile = get_profile(args.profile, args.covariance_matrix, args.gas, args.power_low, args.power_high, args.power_gen_low, args.power_gen_high)
-    df = pd.read_csv(args.offers, comment='#')
+    df = pd.read_csv(args.contracts, comment='#')
     df = normalize(df)
+    print(f'Read {len(df.index)} contract options')
     if not verify(df):
         return
     if args.filter:
         df.query(args.filter, inplace=True)
         print('Dataframe after filtering:')
-    print(df.to_string())
+        print(df.to_string())
     # mean_vector contains the usage/generation estimations.
     mean_vector = np.array([profile['gas'], profile['power_low'], profile['power_high'], profile['power_gen_low'], profile['power_gen_high']])
 
     if not 'covariance_matrix' in profile: # No statistics -> just simple computing
-        gas, power = best_offer(df, mean_vector, args.saldering, args.outage)
+        gas, power = best_offer(df, mean_vector)
+        if not (gas and power):
+            print('[Warning] Not all of gas/power got an answer. Filtered too much data?')
         year_price = gas.total+power.total + args.extra_costs
         print('No covariance matrix given - computing in exact mode.')
         print(f'The best offer is for {year_price} euro per year, or {year_price/12} euro per month:')
