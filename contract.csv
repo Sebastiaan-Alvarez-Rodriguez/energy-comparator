@@ -1,8 +1,8 @@
-name,type,gasconstant,gasconstant_unit,gasvariable,powerconstant,powerconstant_unit,powervariable_low,powervariable_high,powergen,powergen_cost_kwh,powergen_cost_constant,powergen_cost_constant_unit,bonus
-budget thuis 3 jaar vast (independer),vast,,,,8.99,month,0.24103,0.24103,0.05379,0.03629,0,,0
-united consumers 3 jaar vast (independer),vast,,,,8.56,month,0.22034,0.26500,0.10812,0.10312,0,,240
-united consumers 1 jaar vast (independer),vast,,,,8.70,month,0.23510,0.28010,0.12642,0.12142,0,,190
-engie 1 jaar vast (independer 03-08-2026),vast,7.17,month,1.51805,,,,,,,,,200
-innovia 3 jaar vast (independer 03-08-2026),vast,7.97,month,1.35883,,,,,,,,,200
-vattenfall 1 jaar vast (independer 03-08-2026),vast,7.99,month,1.50035,8.99,month,0.26730,0.26730,0.06470,0.04404,0,,295
-united consumers 3 jaar vast (independer 03-08-2026),vast,8.33,month,1.45999,8.56,month,0.22959,0.27853,0.11621,0.11121,0,,600
+name,type,length,gasconstant,gasconstant_unit,gasvariable,powerconstant,powerconstant_unit,powervariable_low,powervariable_high,powergen,powergen_cost_kwh,powergen_cost_constant,powergen_cost_constant_unit,bonus
+budget thuis 3 jaar vast (independer),vast,3,,,,8.99,month,0.24103,0.24103,0.05379,0.03629,0,,0
+united consumers 3 jaar vast (independer),vast,3,,,,8.56,month,0.22034,0.26500,0.10812,0.10312,0,,240
+united consumers 1 jaar vast (independer),vast,1,,,,8.70,month,0.23510,0.28010,0.12642,0.12142,0,,190
+engie 1 jaar vast (independer 03-08-2026),vast,1,7.17,month,1.51805,,,,,,,,,200
+innovia 3 jaar vast (independer 03-08-2026),vast,3,7.97,month,1.35883,,,,,,,,,200
+vattenfall 1 jaar vast (independer 03-08-2026),vast,1,7.99,month,1.50035,8.99,month,0.26730,0.26730,0.06470,0.04404,0,,295
+united consumers 3 jaar vast (independer 03-08-2026),vast,3,8.33,month,1.45999,8.56,month,0.22959,0.27853,0.11621,0.11121,0,,600

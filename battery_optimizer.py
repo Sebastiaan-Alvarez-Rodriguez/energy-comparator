@@ -262,10 +262,7 @@ def plot_battery_rel_gain(outputs_df, inv, df, p_col, np_col, nc_col, min_pct=0.
     plt.tight_layout()
     plt.show()
 
-def main():
-    # Simple program to calculate optimal home battery size for a given power consumption
-    # all power related specs expected in kWh, or euro/kWh where applicable.
-    parser = argparse.ArgumentParser()
+def add_args(parser):
     parser.add_argument('--battery-plotter', action='store_true', help='If set, simulates several different battery configurations for a household')
     parser.add_argument('--history-house', default=str(Path.cwd() / 'history_house.csv'), help='Data file containing house historical gross production and grid consumption values.')
     parser.add_argument('--hp', default='sensor.solaredge_solar_power', help='Index name for sensor production values')
@@ -274,7 +271,12 @@ def main():
     parser.add_argument('--history-prices', default=str(Path.cwd() / 'history_prices.csv'), help='Data file containing historical dynamic prices')
     parser.add_argument('--pp', default='prijs_excl_belastingen', help='Index name for prices')
     parser.add_argument('--filter', type=str, default=None, help='Execute filter query on house dataset. Example: --filter "`type==\'vast\' & name!=\'Oxxio 1 jaar\'"`. Exact syntax: https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.query.html')
-
+    
+def main():
+    # Simple program to calculate optimal home battery size for a given power consumption
+    # all power related specs expected in kWh, or euro/kWh where applicable.
+    parser = argparse.ArgumentParser()
+    add_args(parser)
     args = parser.parse_args()
 
     df = pd.read_csv(args.history_house, comment='#')
