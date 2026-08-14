@@ -43,7 +43,7 @@ def simulate_battery(df, p_col, np_col, nc_col, capacity_kwh=10, inverter_limit_
     
     Parameters:
     - df: Input pandas DataFrame
-    - p_col, np_col, nc_col: String names of your columns
+    - p_col, np_col, nc_col: String names of your columns (p = gross solar production, np = net production sent to the grid, nc = net consumption from the grid)
     - capacity_kwh: Total battery capacity in kWh
     - inverter_limit_kw: The battery inverter limit on how many kW of power it can safely convert from or to the battery at any time.
     - min_pct: Minimum charge threshold (e.g., 0.20 for 20%)
@@ -94,7 +94,6 @@ def simulate_battery(df, p_col, np_col, nc_col, capacity_kwh=10, inverter_limit_
             new_nc = nc - discharge_amount
         else:
             new_nc = nc
-            
         # Save states for this timestamp
         sim_battery_soc.append(current_charge)
         sim_nc.append(new_nc)
@@ -216,13 +215,13 @@ def plot_battery_rel_gain(outputs_df, inv, df, p_col, np_col, nc_col, min_pct=0.
     group = group.sort_values('capacity').copy()
 
     # Calculate Bar 1 & 3: Reduction compared to 0 kWh baseline
-    group['nc_red_base'] = ((nc_base - group['nc_Sum']) / nc_base) * 100
-    group['np_red_base'] = ((np_base - group['np_Sum']) / np_base) * 100
+    group['nc_red_base'] = ((nc_base - group['nc_sum']) / nc_base) * 100
+    group['np_red_base'] = ((np_base - group['np_sum']) / np_base) * 100
 
     # Calculate Bar 2 & 4: Reduction compared to the previous capacity step
     # (Using shift() to get the previous row's value; first row defaults to 0)
-    group['nc_Red_Prev'] = ((group['nc_Sum'].shift(1) - group['nc_Sum']) / group['nc_Sum'].shift(1)).fillna(0) * 100
-    group['np_Red_Prev'] = ((group['np_Sum'].shift(1) - group['np_Sum']) / group['np_Sum'].shift(1)).fillna(0) * 100
+    group['nc_red_prev'] = ((group['nc_sum'].shift(1) - group['nc_sum']) / group['nc_sum'].shift(1)).fillna(0) * 100
+    group['np_red_prev'] = ((group['np_sum'].shift(1) - group['np_sum']) / group['np_sum'].shift(1)).fillna(0) * 100
 
     plt.figure(figsize=(14, 6))
 
@@ -313,11 +312,11 @@ def main():
         plot_battery_cap(outputs_df, df, *houseargs)
         plot_battery_rel_gain(outputs_df, 5, df, *houseargs)
 
-    print('Case 1a: no overflow, 5kWh battery, 5kW inverter unit.')
+    print('Case: no overflow, 5kWh battery, 5kW inverter unit.')
     inv = 5
     cap = 5
     min_pct = 0
-    max_pct = 100
+    max_pct = 1
     discard_overflow = True
     # sim_df = run_single_simulation(inv, cap, df, *houseargs, min_pct, max_pct, discard_overflow)
     sim_df = simulate_battery(df, *houseargs, capacity_kwh=cap, inverter_limit_kw=inv, min_pct=min_pct, max_pct=max_pct, discard_overflow=discard_overflow)
