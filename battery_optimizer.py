@@ -2,11 +2,11 @@ import argparse
 from concurrent.futures import ProcessPoolExecutor
 from pathlib import Path
 import itertools
-import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy.stats import multivariate_normal
 
+import shared as s
 
 def set_if_not_null(d, key, value):
     if value:
@@ -28,22 +28,21 @@ def verify_house(df, *names):
             ok = False
     return ok
 
-def verify_prices(df, *names):
-    # verifies integrity of house csv file.
-    ok = True
-    for name in names:
-        if name not in df:
-            print(f'[Error] Missing column name "{name}" in csv header.')
-            ok = False
-    return ok
-
-def simulate_battery(df, p_col, np_col, nc_col, capacity_kwh=10, inverter_limit_kw=5.0, min_pct=0.20, max_pct=0.80, discard_overflow=False):
+def simulate_battery_parametrized(df, p_col, np_col, nc_col, charge, discharge, capacity_kwh=10, inverter_limit_kw=5.0, min_pct=0.20, max_pct=0.80):
     '''
     Simulates a home battery system and calculates adjusted grid metrics.
-    
+    Algorithm used is:
+    - if power production:
+        - if battery space free: in battery (limited by battery inverter strength)
+        - the rest to grid / discard (depending on discard_overflow)
+    - if power net consumption:
+        - if battery power ready: from battery (limited by battery inverter strength)
+        - the rest from grid
     Parameters:
     - df: Input pandas DataFrame
     - p_col, np_col, nc_col: String names of your columns (p = gross solar production, np = net production sent to the grid, nc = net consumption from the grid)
+    - charge: function determining how much to charge. Function receives idx, row, possible_charge
+    - discharge: function determining how much to discharge. Function receives idx, row, possible_discharge
     - capacity_kwh: Total battery capacity in kWh
     - inverter_limit_kw: The battery inverter limit on how many kW of power it can safely convert from or to the battery at any time.
     - min_pct: Minimum charge threshold (e.g., 0.20 for 20%)
@@ -63,35 +62,31 @@ def simulate_battery(df, p_col, np_col, nc_col, capacity_kwh=10, inverter_limit_
     sim_np = []
     
     # Sequential simulation loop
-    for _, row in df.iterrows():
+    for idx, row in df.iterrows():
         p = row[p_col]
-        np_val = row[np_col]
+        np = row[np_col]
         nc = row[nc_col]
+        assert max_charge - current_charge >= 0
         
         # 1. HANDLE SURPLUS GENERATION (Charging)
-        if np_val > 0:
-            if max_charge - current_charge > 0:
-                # we can only charge as much as the battery inverter can safely convert AC->DC
-                possible_charge = min(np_val, inverter_limit_kw)
-                # Absorb what we can into the battery
-                charge_amount = min(possible_charge, (max_charge - current_charge))
-                current_charge += charge_amount
-                remaining_surplus = np_val - charge_amount
-                # Determine what happens to the leftover energy
-                new_np = 0.0 if discard_overflow else remaining_surplus
-            else:
-                new_np = 0.0 if discard_overflow else np_val # no room for power
+        if np > 0:
+            # charge limit is the minimum of: produced kWh, inverter limit, free-space in battery
+            possible_charge = min(np, inverter_limit_kw, (max_charge - current_charge))
+            chosen = charge(idx, row, possible_charge)
+            assert chosen <= possible_charge
+            current_charge += chosen
+            new_np = np-chosen
         else:
-            new_np = np_val
+            new_np = 0.0
             
         # 2. HANDLE DEFICIT/CONSUMPTION (Discharging)
         if nc > 0 and (current_charge - min_charge) > 0:
-            # we can only discharge as much as the battery inverter can safely convert DC->AC
-            possible_charge = min(nc, inverter_limit_kw)
-            # Drain what we can from the battery
-            discharge_amount = min(possible_charge, (current_charge - min_charge))
-            current_charge -= discharge_amount
-            new_nc = nc - discharge_amount
+            # discharge limit is the minimum of: consumed kWh, inverter limit, charged-space in battery
+            possible_discharge = min(nc, inverter_limit_kw, (current_charge - min_charge))
+            chosen = discharge(idx, row, possible_discharge)
+            assert chosen <= possible_discharge
+            current_charge -= chosen
+            new_nc = nc-chosen
         else:
             new_nc = nc
         # Save states for this timestamp
@@ -104,6 +99,33 @@ def simulate_battery(df, p_col, np_col, nc_col, capacity_kwh=10, inverter_limit_
     sim_df['battery_soc_kwh'] = sim_battery_soc
     sim_df[nc_col] = sim_nc
     sim_df[np_col] = sim_np
+    return sim_df
+
+    
+def simulate_battery(df, p_col, np_col, nc_col, capacity_kwh=10, inverter_limit_kw=5.0, min_pct=0.20, max_pct=0.80, discard_overflow=False):
+    '''
+    Simulates a home battery system and calculates adjusted grid metrics.
+    Algorithm used is:
+    - if power production:
+        - if battery space free: in battery (limited by battery inverter strength)
+        - the rest to grid / discard (depending on discard_overflow)
+    - if power net consumption:
+        - if battery power ready: from battery (limited by battery inverter strength)
+        - the rest from grid
+    Parameters:
+    - df: Input pandas DataFrame
+    - p_col, np_col, nc_col: String names of your columns (p = gross solar production, np = net production sent to the grid, nc = net consumption from the grid)
+    - capacity_kwh: Total battery capacity in kWh
+    - inverter_limit_kw: The battery inverter limit on how many kW of power it can safely convert from or to the battery at any time.
+    - min_pct: Minimum charge threshold (e.g., 0.20 for 20%)
+    - max_pct: Maximum charge threshold (e.g., 0.80 for 80%)
+    - discard_overflow: If True, excess solar is wasted when battery is full. If False, excess solar is delivered to the grid.
+    '''
+    charge = lambda idx, row, possible_charge: possible_charge
+    discharge = lambda idx, row, possible_discharge: possible_discharge
+    sim_df = simulate_battery_parametrized(df, p_col, np_col, nc_col, charge, discharge, capacity_kwh=capacity_kwh, inverter_limit_kw=inverter_limit_kw, min_pct=min_pct, max_pct=max_pct)
+    if discard_overflow:
+        sim_df[sim_df[np_col] > 0] = 0
     return sim_df
 
 def printst(df, p, np, nc):
@@ -261,51 +283,23 @@ def plot_battery_rel_gain(outputs_df, inv, df, p_col, np_col, nc_col, min_pct=0.
     plt.tight_layout()
     plt.show()
 
-def add_args(parser):
-    parser.add_argument('--battery-plotter', action='store_true', help='If set, simulates several different battery configurations for a household')
-    parser.add_argument('--history-house', default=str(Path.cwd() / 'history_house.csv'), help='Data file containing house historical gross production and grid consumption values.')
-    parser.add_argument('--hp', default='sensor.solaredge_solar_power', help='Index name for sensor production values')
-    parser.add_argument('--hnp', default='sensor.electricity_meter_power_production', help='Index name for sensor net production values (i.e. what is delivered back to the grid)')
-    parser.add_argument('--hnc', default='sensor.electricity_meter_power_consumption', help='Index name for sensor consumption values')
-    parser.add_argument('--history-prices', default=str(Path.cwd() / 'history_prices.csv'), help='Data file containing historical dynamic prices')
-    parser.add_argument('--pp', default='prijs_excl_belastingen', help='Index name for prices')
-    parser.add_argument('--filter', type=str, default=None, help='Execute filter query on house dataset. Example: --filter "`type==\'vast\' & name!=\'Oxxio 1 jaar\'"`. Exact syntax: https://pandas.pydata.org/docs/reference/api/pandas.DataFrame.query.html')
-    
 def main():
     # Simple program to calculate optimal home battery size for a given power consumption
     # all power related specs expected in kWh, or euro/kWh where applicable.
     parser = argparse.ArgumentParser()
-    add_args(parser)
+    parser.add_argument('--plot', action='store_true', help='If set, simulates several different battery configurations for a household')
+    s.house_args(parser)
     args = parser.parse_args()
 
-    df = pd.read_csv(args.history_house, comment='#')
     houseargs = [args.hp, args.hnp, args.hnc] # arguments related to house dataset
-    if not verify_house(df, *houseargs):
+    df, ok = s.house_read(args.history_house, *houseargs, args.filter)
+    if not ok:
         return
-    df = df.pivot(index = 'last_changed', columns='entity_id', values='state')
-    df = df.fillna(0.0) # this is valid: used sensors fill NaN sometimes when no production is present.
-
-    prices = pd.read_csv(args.history_prices, comment='#', sep=';')
-    priceargs = [args.pp]
-    if not verify_prices(prices, *priceargs):
-        return
-    prices['prijs_excl_belastingen'] = prices['prijs_excl_belastingen'].str.replace(',', '.').astype(float)
-    prices['datum_utc'] = pd.to_datetime(prices['datum_utc'])
-    prices = prices.set_index('datum_utc')
-    prices.index.name = 'last_changed'
-    prices = prices[['prijs_excl_belastingen']].resample('1h').mean()
-    prices.index = prices.index.strftime('%Y-%m-%dT%H:%M:%S.000Z')
-    df = df.merge(prices, left_index=True, right_index=True,  how='left') # with this trick: hourly prices are added to the main df, using left join. If there is no hit for the measured time in 'df', then a NaN is filled in.
-
-    print(f'Number of datapoints: {len(df.index)}')
-    if args.filter:
-        df.query(args.filter, inplace=True)
-        print(f'Number of datapoints (post-filter): {len(df.index)}')
 
     print('Base situation (no battery)')
     printst(df, *houseargs)
 
-    if args.battery_plotter:
+    if args.plot:
         capacities = [x*0.5 for x in range (0, 61)]
         inverters = [1, 2, 5, 10]
         outputs_df = run_simulations(inverters, capacities, df, *houseargs, min_pct=0.2, max_pct=0.8, discard_overflow=False)

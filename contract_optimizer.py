@@ -7,8 +7,7 @@ import pandas as pd
 from scipy.stats import multivariate_normal
 
 import battery_optimizer as bat
-
-required_csv_names = ['name','type','length','gasconstant','gasconstant_unit','gasvariable','powerconstant','powerconstant_unit','powervariable_low','powervariable_high','powergen','powergen_cost_kwh','powergen_cost_constant', 'powergen_cost_constant_unit', 'bonus']
+import shared as s
 
 def set_if_not_null(d, key, value):
     if value:
@@ -52,29 +51,14 @@ def normalize(df):
     inline_normalize('gasconstant')
 
     df.bonus = df.bonus / df.length # bonus is normalized to year amounts
-    # power_month_mask = df.powerconstant_unit == 'month'
-    # df['powerconstant'] = df.powerconstant * 12 * power_month_mask + df.powerconstant * (~power_month_mask)
-    # power_day_mask = df.powerconstant_unit == 'day'
-    # df['powerconstant'] = df.powerconstant * 12 * power_day_mask + df.powerconstant * (~power_day_mask)
-    # df['powerconstant_unit'] = 'year'
-
-    # powergen_cost_month_mask = df.powergen_cost_constant_unit == 'month'
-    # df['powergen_cost_constant'] = df.powergen_cost_constant * 12 * powergen_cost_month_mask + df.powergen_cost_constant * (~powergen_cost_month_mask )
-    # powergen_cost_day_mask = df.powergen_cost_constant_unit  == 'day'
-    # df['powergen_cost_constant'] = df.powergen_cost_constant * 12 * powergen_cost_day_mask + df.powergen_cost_constant * (~powergen_cost_day_mask )
-    # df['powergen_cost_constant_unit'] = 'year'
-
-    # gas_month_mask = df.gasconstant_unit == 'month'
-    # df['gasconstant'] = df.gasconstant * 12 * gas_month_mask + df.gasconstant * (~gas_month_mask)
-    # gas_day_mask = df.gasconstant_unit == 'day'
-    # df['gasconstant'] = df.gasconstant * 12 * gas_day_mask + df.gasconstant * (~gas_day_mask)
-    # df['gasconstant_unit'] = 'year'
     return df
 
 
-def verify(df):
+def verify_contracts(df):
     # verifies integrity of input csv file.
     ok = True
+    required_csv_names = ['name','type','length','gasconstant','gasconstant_unit','gasvariable','powerconstant','powerconstant_unit','powervariable_low','powervariable_high','powergen','powergen_cost_kwh','powergen_cost_constant', 'powergen_cost_constant_unit', 'bonus']
+
     for name in required_csv_names:
         if name not in df:
             print(f'[Error] Missing column name "{name}" in csv header.')
@@ -185,7 +169,7 @@ def main():
     df = pd.read_csv(args.contracts, comment='#')
     df = normalize(df)
     print(f'Read {len(df.index)} contract options')
-    if not verify(df):
+    if not verify_contracts(df):
         return
     if args.filter:
         df.query(args.filter, inplace=True)
