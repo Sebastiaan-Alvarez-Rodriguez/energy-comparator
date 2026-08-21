@@ -41,8 +41,10 @@ def simulate_battery_parametrized(df, p_col, np_col, nc_col, charge, discharge, 
     Parameters:
     - df: Input pandas DataFrame
     - p_col, np_col, nc_col: String names of your columns (p = gross solar production, np = net production sent to the grid, nc = net consumption from the grid)
-    - charge: function determining how much to charge. Function receives idx, row, possible_charge
-    - discharge: function determining how much to discharge. Function receives idx, row, possible_discharge
+    - charge: function determining how much to charge. Function receives idx, row, self-produced available charge, possible_charge
+      * note: if returned charge amount > available charge, assumes you make battery charge from the grid
+    - discharge: function determining how much to discharge. Function receives idx, row, house-satisfying discharge, possible_discharge
+      * note: if returned discharge amount > house-satisfying discharge, assumes you make battery discharge extra to sell to the grid
     - capacity_kwh: Total battery capacity in kWh
     - inverter_limit_kw: The battery inverter limit on how many kW of power it can safely convert from or to the battery at any time.
     - min_pct: Minimum charge threshold (e.g., 0.20 for 20%)
@@ -66,29 +68,30 @@ def simulate_battery_parametrized(df, p_col, np_col, nc_col, charge, discharge, 
         p = row[p_col]
         np = row[np_col]
         nc = row[nc_col]
+        new_nc = 0.0
+        new_np = 0.0
         assert max_charge - current_charge >= 0
+        assert np >= 0
+        assert nc >= 0
         
-        # 1. HANDLE SURPLUS GENERATION (Charging)
-        if np > 0:
-            # charge limit is the minimum of: produced kWh, inverter limit, free-space in battery
-            possible_charge = min(np, inverter_limit_kw, (max_charge - current_charge))
-            chosen = charge(idx, row, possible_charge)
-            assert chosen <= possible_charge
-            current_charge += chosen
-            new_np = np-chosen
-        else:
-            new_np = 0.0
-            
-        # 2. HANDLE DEFICIT/CONSUMPTION (Discharging)
-        if nc > 0 and (current_charge - min_charge) > 0:
-            # discharge limit is the minimum of: consumed kWh, inverter limit, charged-space in battery
-            possible_discharge = min(nc, inverter_limit_kw, (current_charge - min_charge))
-            chosen = discharge(idx, row, possible_discharge)
-            assert chosen <= possible_discharge
-            current_charge -= chosen
-            new_nc = nc-chosen
-        else:
-            new_nc = nc
+        # 1. HANDLE CHARGING (from production surplus or buying from grid)
+        # charge limit is the minimum of: inverter limit, free-space in battery
+        possible_charge = min(inverter_limit_kw, (max_charge - current_charge))
+        chosen = charge(idx, row, np, possible_charge)
+        assert chosen <= possible_charge
+        current_charge += chosen
+        new_np += max(0, np-chosen)
+        new_nc += max(0, chosen-np) # if more than np is selected, battery charges with more than just our net produced power, i.e. uses grid!
+
+        # 2. HANDLE DEFICIT/CONSUMPTION (from discharging or selling to grid)
+        # discharge limit is the minimum of: inverter limit, charged-space in battery
+        possible_discharge = min(inverter_limit_kw, (current_charge - min_charge))
+        chosen = discharge(idx, row, nc, possible_discharge)
+        assert chosen <= possible_discharge
+        current_charge -= chosen
+        new_np += max(0, chosen-nc) # if more than nc is selected, battery discharges more than house need, i.e. sell to the grid
+        new_nc += max(0, nc-chosen)
+
         # Save states for this timestamp
         sim_battery_soc.append(current_charge)
         sim_nc.append(new_nc)
@@ -121,8 +124,8 @@ def simulate_battery(df, p_col, np_col, nc_col, capacity_kwh=10, inverter_limit_
     - max_pct: Maximum charge threshold (e.g., 0.80 for 80%)
     - discard_overflow: If True, excess solar is wasted when battery is full. If False, excess solar is delivered to the grid.
     '''
-    charge = lambda idx, row, possible_charge: possible_charge
-    discharge = lambda idx, row, possible_discharge: possible_discharge
+    charge = lambda idx, row, available_self_power, possible_charge: min(available_self_power, possible_charge)
+    discharge = lambda idx, row, satisfying_self_power, possible_discharge: min(satisfying_self_power, possible_discharge)
     sim_df = simulate_battery_parametrized(df, p_col, np_col, nc_col, charge, discharge, capacity_kwh=capacity_kwh, inverter_limit_kw=inverter_limit_kw, min_pct=min_pct, max_pct=max_pct)
     if discard_overflow:
         sim_df[sim_df[np_col] > 0] = 0

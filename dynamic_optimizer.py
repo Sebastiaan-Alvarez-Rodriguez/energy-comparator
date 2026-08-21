@@ -64,9 +64,8 @@ def calc(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, discard_over
     if bat == 'basic':
         copy = b.simulate_battery(df, hp, hnp, hnc, capacity_kwh=bat_capacity_kwh, inverter_limit_kw=bat_inverter_limit_kw)
     elif bat == 'simple-buy':
-        charge = lambda idx, row, possible_charge: possible_charge # always charge, never sell
-        discharge = lambda idx, row, possible_discharge: 0 if (row[pp]*(1.0+vat)+fee_cons <= 0.0) else possible_discharge
-        # charge 
+        charge = lambda idx, row, available_self_power, possible_charge: min(available_self_power, possible_charge) if (row[pp]*(1.0+vat)+fee_cons > 0.0) else possible_charge # always charge with own power, if price is negative also with grid power
+        discharge = lambda idx, row, satisfying_self_power, possible_discharge: min(satisfying_self_power, possible_discharge) # we are not going to 'smart-sell' here.
         copy = b.simulate_battery_parametrized(df, hp, hnp, hnc, charge, discharge, capacity_kwh=bat_capacity_kwh, inverter_limit_kw=bat_inverter_limit_kw)
     else:
         copy = df.copy()
@@ -127,7 +126,7 @@ def main():
     print(f'Number of datapoints: {len(df.index)} (so {len(df.index)/24:.2f} days of data)')
 
     # battery_modes = [None, 'basic', 'smart']
-    battery_modes = [None, 'basic']
+    battery_modes = [None, 'basic', 'simple-buy']
     discard_policies = [None, 'all', 'positive']
     for pol in discard_policies:
         for mode in battery_modes:
