@@ -42,9 +42,9 @@ def calc(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, discard_over
     basic calculation of energy cost.
     Parameters:
     - df: Input pandas DataFrame
-    - hp, np, nc, pp: String names of your columns (hp = gross solar production, hnp = net production sent to the grid, hnc = net consumption from the grid, pp = price/kwh)
+    - hp, hnp, hnc, pp: String names of your columns (hp = gross solar production, hnp = net production sent to the grid, hnc = net consumption from the grid, pp = price/kwh)
     - energy_tax: energy tax per kWh, paid only when consuming (not getting anything back when producing)
-    - vat: vat calculated, received when producing and paid when consuming
+    - vat: vat as a factor (e.g. 0.21), received when we are the paying party (i.e. producing at a positive price/kWh, or consuming at a negative price/kWh)
     - fee_cons: fee per kWh for consuming
     - fee_prod: fee per kWh for producing
     - discard_overflow: can be None, 'all' or 'postitive'. On 'all', all net production is discarded. On 'positive', only discard when net-production costs money
@@ -73,11 +73,17 @@ def calc(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, discard_over
     if discard_overflow == 'all':
         copy[hnp] = 0.0 # no net production, discard ALL
     elif discard_overflow == 'positive':
-        copy[(copy[hnp] > 0.0) & (copy[pp]*(1.0+vat) <= 0.0+fee_prod)] = 0.0 # discard production if price turns negative
-    base_power = (copy[hnc] - copy[hnp])
+        # copy['sell_gain'] = copy[pp]*(1.0+vat) - fee_prod
+        # print(copy[copy['sell_gain'] <= 0.0])
+        # copy.loc[copy.sell_gain <= 0.0, hnp] = 0.0 # discard surplus!! production if price turns negative
+        copy.loc[(copy[hnp] > 0.0) & (copy[pp]*(1.0+vat) <= 0.0+fee_prod), hnp] = 0.0 # discard production if price turns negative
+        # copy.loc[(copy[hnp] > 0.0) & (copy[pp] >= 0.0) & (copy[pp]*(1.0-vat) - fee_prod <= 0), hnp] = 0.0 # discard production if no financial gain (positive price)
+        # copy.loc[(copy[hnp] > 0.0) & (copy[pp] < 0.0) & (copy[pp]*(1.0+vat) - fee_prod <= 0), hnp] = 0.0 # discard production if no financial gain (negative price, pay-per-kwh) (note: this should never be possible)
+
+    base_power = (copy[hnc] - copy[hnp]) # TODO: this is not true: I pay and gain directly what I produce/consume, never subtract these (would assume some form of 'battery')
     price = base_power * copy[pp]
     energy_tax = copy[hnc] * energy_tax
-    vat = (price+energy_tax) * vat
+    vat = (price+energy_tax) * vat # NOTE: if net-producing, positive price, it could occur that the energy tax flips price+energy_tax to a positive number. I should still receive vat instead of pay it!
     fee = copy[hnc] * fee_cons + copy[hnp] * fee_prod
     return price + energy_tax + vat + fee
 
@@ -124,6 +130,10 @@ def main():
     df = df.merge(prices, left_index=True, right_index=True,  how='left') # with this trick: hourly prices are added to the main df, using left join. If there is no hit for the measured time in 'df', then a NaN is filled in.
     df = df.dropna(subset=[args.pp]) # drop data for which we have no dynamic prices
     print(f'Number of datapoints: {len(df.index)} (so {len(df.index)/24:.2f} days of data)')
+    print(f'Stats:')
+    print(f'  {df[args.hnc].sum():.2f}kWh net consumed')
+    print(f'  {df[args.hnp].sum():.2f}kWh net produced')
+    print()
 
     # battery_modes = [None, 'basic', 'smart']
     battery_modes = [None, 'basic', 'simple-buy']

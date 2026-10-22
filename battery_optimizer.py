@@ -128,7 +128,7 @@ def simulate_battery(df, p_col, np_col, nc_col, capacity_kwh=10, inverter_limit_
     discharge = lambda idx, row, satisfying_self_power, possible_discharge: min(satisfying_self_power, possible_discharge)
     sim_df = simulate_battery_parametrized(df, p_col, np_col, nc_col, charge, discharge, capacity_kwh=capacity_kwh, inverter_limit_kw=inverter_limit_kw, min_pct=min_pct, max_pct=max_pct)
     if discard_overflow:
-        sim_df[sim_df[np_col] > 0] = 0
+        sim_df.loc[sim_df[np_col] > 0, np_col] = 0
     return sim_df
 
 def printst(df, p, np, nc):
@@ -285,6 +285,9 @@ def plot_battery_rel_gain(outputs_df, inv, df, p_col, np_col, nc_col, min_pct=0.
 
     plt.tight_layout()
     plt.show()
+
+def add_args(parser):
+    pass
 
 def main():
     # Simple program to calculate optimal home battery size for a given power consumption
