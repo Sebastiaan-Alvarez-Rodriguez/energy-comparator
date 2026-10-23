@@ -37,6 +37,46 @@ def read_dynamics(path, colname):
         ok = True
     return prices, ok
 
+def do_emhass():
+    from emhass.retrieve_mem import RetrieveMem
+    from emhass.optimization import Optimization
+    from emhass.processor import Processor
+    import pandas as pd
+
+    # 1. Laad je historische data (uur- of kwartierbasis)
+    # DataFrame moet kolommen hebben voor: 'prod' (opwek), 'load' (huisverbruik), 'price_buy' (all-in netprijs)
+    df_historical = pd.read_csv('jouw_6_maanden_data.csv', parse_dates=True, index_col='timestamp')
+
+    # 2. Definieer je batterij-specificaties
+    battery_params = {
+        'nominal_capacity': 10000,      # 10 kWh batterij (in Wh)
+        'max_charge_power': 5000,       # Max laadsnelheid 5 kW
+        'max_discharge_power': 5000,    # Max ontlaadsnelheid 5 kW
+        'efficiency_charge': 0.90,      # 90% laad-efficiëntie
+        'efficiency_discharge': 0.90,   # 90% ontlaad-efficiëntie
+        'min_soc': 0.1,                 # Minimaal 10% lading behouden
+        'max_soc': 1.0,                 # Maximaal 100%
+    }
+
+    # 3. Initialiseer de EMHASS optimalisatie module
+    opt = Optimization(
+        retrieve_mem=RetrieveMem(),
+        optimization_mindate=df_historical.index.min(),
+        optimization_maxdate=df_historical.index.max(),
+        set_type='perfect-optim'  # Backtesten met historische data
+    )
+
+    # 4. Voer de wiskundige optimalisatie uit
+    # EMHASS berekent nu lineair de meest goedkope route door de data heen
+    cost_arguments = {'weight_cost_function': 1.0} # Focus puur op minimale kosten
+    results = opt.perform_perfect_optimization(
+        df_historical, battery_params, cost_arguments
+    )
+
+    # 5. Resultaten analyseren
+    # 'results' bevat nu kolommen zoals: 'p_bat_charge', 'p_bat_discharge', 'p_grid_import'
+    print(f'Minimale totale jaarkosten volgens LP-algoritme: €{results["cost"].sum():.2f}')
+    
 def calc(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, discard_overflow=None, bat=None, bat_capacity_kwh=10, bat_inverter_limit_kw=5.0):
     '''
     basic calculation of energy cost.
@@ -64,28 +104,32 @@ def calc(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, discard_over
     if bat == 'basic':
         copy = b.simulate_battery(df, hp, hnp, hnc, capacity_kwh=bat_capacity_kwh, inverter_limit_kw=bat_inverter_limit_kw)
     elif bat == 'simple-buy':
-        charge = lambda idx, row, available_self_power, possible_charge: min(available_self_power, possible_charge) if (row[pp]*(1.0+vat)+fee_cons > 0.0) else possible_charge # always charge with own power, if price is negative also with grid power
+        charge = lambda idx, row, available_self_power, possible_charge: min(available_self_power, possible_charge) if ((row[pp]+fee_cons+energy_tax)*(1.0+vat) > 0.0) else possible_charge # always charge with own power, if price is negative also with grid power
         discharge = lambda idx, row, satisfying_self_power, possible_discharge: min(satisfying_self_power, possible_discharge) # we are not going to 'smart-sell' here.
         copy = b.simulate_battery_parametrized(df, hp, hnp, hnc, charge, discharge, capacity_kwh=bat_capacity_kwh, inverter_limit_kw=bat_inverter_limit_kw)
+    elif bat == 'emhass':
+        return do_emhass()
     else:
         copy = df.copy()
 
     if discard_overflow == 'all':
         copy[hnp] = 0.0 # no net production, discard ALL
     elif discard_overflow == 'positive':
-        # copy['sell_gain'] = copy[pp]*(1.0+vat) - fee_prod
-        # print(copy[copy['sell_gain'] <= 0.0])
-        # copy.loc[copy.sell_gain <= 0.0, hnp] = 0.0 # discard surplus!! production if price turns negative
-        copy.loc[(copy[hnp] > 0.0) & (copy[pp]*(1.0+vat) <= 0.0+fee_prod), hnp] = 0.0 # discard production if price turns negative
-        # copy.loc[(copy[hnp] > 0.0) & (copy[pp] >= 0.0) & (copy[pp]*(1.0-vat) - fee_prod <= 0), hnp] = 0.0 # discard production if no financial gain (positive price)
-        # copy.loc[(copy[hnp] > 0.0) & (copy[pp] < 0.0) & (copy[pp]*(1.0+vat) - fee_prod <= 0), hnp] = 0.0 # discard production if no financial gain (negative price, pay-per-kwh) (note: this should never be possible)
+        copy.loc[(copy[hnp] > 0.0) & (copy[pp] <= fee_prod), hnp] = 0.0 # discard production if price turns negative
+    return compute_costs(copy,  hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod)
 
-    base_power = (copy[hnc] - copy[hnp]) # TODO: this is not true: I pay and gain directly what I produce/consume, never subtract these (would assume some form of 'battery')
-    price = base_power * copy[pp]
-    energy_tax = copy[hnc] * energy_tax
-    vat = (price+energy_tax) * vat # NOTE: if net-producing, positive price, it could occur that the energy tax flips price+energy_tax to a positive number. I should still receive vat instead of pay it!
-    fee = copy[hnc] * fee_cons + copy[hnp] * fee_prod
-    return price + energy_tax + vat + fee
+def compute_costs(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod):
+    price_consume = df[hnc] * df[pp] # net consumption * kwh price gross
+    price_produce = df[hnp] * df[pp] * -1 # net production * kwh price gross * -1 (because I get the money for production)
+
+    energy_tax = df[hnc] * energy_tax # energy tax in NL is fixed amount 9.something cents per kWh, only paid when consuming, no longer received when producing kWh's
+
+    vat_consume = (price_consume+energy_tax) * vat
+    # vat_produce = price_produce * vat # NOTE: I get VAT if the price/kWh + energy_tax is negative, so this is correct
+    vat_produce = np.where(price_produce > 0, 0.0, price_produce * vat)
+    fee = df[hnc] * fee_cons + df[hnp] * fee_prod
+    return price_consume + price_produce + energy_tax + vat_consume + vat_produce + fee
+    
 
 def plot(df, prices):
     '''plots the cost development over time'''
@@ -107,8 +151,8 @@ def add_args(parser):
     parser.add_argument('--pp', default='prijs_excl_belastingen', help='Index name for prices')
     parser.add_argument('--energy-tax', default=0.09161, help='Energy taxes per kWh (default is NL 2026 energy tax)')
     parser.add_argument('--vat', default=0.21, help='Energy taxes per kWh (default is NL default VAT)')
-    parser.add_argument('--fee-consumption', default=0.01815, help='Energy taxes per kWh (default is NL default VAT)')
-    parser.add_argument('--fee-production', default=0.01270, help='Energy taxes per kWh (default is NL default VAT)')
+    parser.add_argument('--fee-consumption', default=0.01815, help='Energy taxes per kWh (default is NL avg)')
+    parser.add_argument('--fee-production', default=0.01270, help='Energy taxes per kWh (default is NL avg)')
     
 def main():
     # Simple program to calculate use of dynamic contracts based on real house usage
@@ -141,7 +185,7 @@ def main():
     for pol in discard_policies:
         for mode in battery_modes:
             print(f'Estimated dynamic contract cost (battery: {mode}) (discard overflow: {pol}) for 6 months...')
-            out = calc(df, *houseargs, args.pp, args.energy_tax, args.vat, args.fee_consumption, args.fee_production, discard_overflow=pol, bat=mode, bat_capacity_kwh=5)
+            out = calc(df, *houseargs, args.pp, args.energy_tax, args.vat, args.fee_consumption, args.fee_production, discard_overflow=pol, bat=mode, bat_capacity_kwh=50)
             print(f'Total: {out.sum():.3f} euros')
             if args.plot:
                 plot(df, out)
