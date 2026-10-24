@@ -5,6 +5,24 @@ Small project to help picking electricity and gas contracts.
  - numpy
  - pandas
 
+ Also for dynamic optimizer:
+ - emhass
+
+## Data requirements
+For contract optimizer:
+- know your yearly electricity and gas usages
+
+For battery optimizer:
+- download quarterly/hourly power statistics from home-assistant, e.g. [here](https://ha.h.mijn.place/history?entity_id=sensor.solaredge_solar_power%2Csensor.electricity_meter_power_production%2Csensor.electricity_meter_power_consumption&start_date=2026-01-01T00%3A00%3A00.000Z&end_date=2026-10-23T23%3A59%3A00.000Z)
+  - name it `history_house.csv`
+  Just select the range to use for simulations.
+
+For dynamic optimizer:
+- download quarterly/hourly power statistics from home-assistant (same as battery optimizer)
+  - name it `history_house.csv`
+- download historical dynamic power prices from e.g. [jeroen](https://jeroen.nl/account/data/stroomprijzen) as CSV file
+  - name it `history_prices.csv`
+
 ## Usage
 To use this tool:
 
