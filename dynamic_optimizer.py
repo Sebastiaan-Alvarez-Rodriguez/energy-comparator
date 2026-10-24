@@ -37,28 +37,28 @@ def read_dynamics(path, colname):
         ok = True
     return prices, ok
 
-def do_emhass():
+def do_emhass(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, bat_capacity_kwh=10, bat_inverter_limit_kw=5.0, bat_min_pct=0.2, bat_max_pct=0.8):
     from emhass.retrieve_mem import RetrieveMem
     from emhass.optimization import Optimization
     from emhass.processor import Processor
-    import pandas as pd
 
-    # 1. Laad je historische data (uur- of kwartierbasis)
-    # DataFrame moet kolommen hebben voor: 'prod' (opwek), 'load' (huisverbruik), 'price_buy' (all-in netprijs)
-    df_historical = pd.read_csv('jouw_6_maanden_data.csv', parse_dates=True, index_col='timestamp')
+    copy = df.copy()
+    hc = 'hc'
+    copy[hc] = copy[hnc] + copy[hp] - copy[hnp]
 
-    # 2. Definieer je batterij-specificaties
+    copy.rename({ hp: 'prod', hc: 'load' }, inplace=True)
+    copy['price_buy'] = (copy[pp] + energy_tax + fee_cons) * (1.0+vat)
+
     battery_params = {
-        'nominal_capacity': 10000,      # 10 kWh batterij (in Wh)
-        'max_charge_power': 5000,       # Max laadsnelheid 5 kW
-        'max_discharge_power': 5000,    # Max ontlaadsnelheid 5 kW
-        'efficiency_charge': 0.90,      # 90% laad-efficiëntie
-        'efficiency_discharge': 0.90,   # 90% ontlaad-efficiëntie
-        'min_soc': 0.1,                 # Minimaal 10% lading behouden
-        'max_soc': 1.0,                 # Maximaal 100%
+        'nominal_capacity': bat_capacity_kwh*1000, # battery cap (Wh)
+        'max_charge_power': bat_inverter_limit_kw*1000, # charge speed (W)
+        'max_discharge_power': bat_inverter_limit_kw*1000, # discharge speed (W)
+        'efficiency_charge': 0.90, # charge efficiency factor (rest of power is lost)
+        'efficiency_discharge': 0.90, # discharge efficiency factor (rest of power is lost)
+        'min_soc': bat_min_pct, # min charge to keep
+        'max_soc': bat_max_pct, # max charge to keep
     }
 
-    # 3. Initialiseer de EMHASS optimalisatie module
     opt = Optimization(
         retrieve_mem=RetrieveMem(),
         optimization_mindate=df_historical.index.min(),
@@ -66,18 +66,14 @@ def do_emhass():
         set_type='perfect-optim'  # Backtesten met historische data
     )
 
-    # 4. Voer de wiskundige optimalisatie uit
-    # EMHASS berekent nu lineair de meest goedkope route door de data heen
     cost_arguments = {'weight_cost_function': 1.0} # Focus puur op minimale kosten
-    results = opt.perform_perfect_optimization(
-        df_historical, battery_params, cost_arguments
-    )
+    results = opt.perform_perfect_optimization(df_historical, battery_params, cost_arguments)
 
     # 5. Resultaten analyseren
     # 'results' bevat nu kolommen zoals: 'p_bat_charge', 'p_bat_discharge', 'p_grid_import'
     print(f'Minimale totale jaarkosten volgens LP-algoritme: €{results["cost"].sum():.2f}')
     
-def calc(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, discard_overflow=None, bat=None, bat_capacity_kwh=10, bat_inverter_limit_kw=5.0):
+def calc(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, discard_overflow=None, bat=None, bat_capacity_kwh=10, bat_inverter_limit_kw=5.0, bat_min_pct=0.20, bat_max_pct=0.80):
     '''
     basic calculation of energy cost.
     Parameters:
@@ -94,21 +90,23 @@ def calc(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, discard_over
       - On 'simple-buy', battery is charged when power price is 0 or negative
     - bat_capacity_kwh: amount of kwh to simulate battery with
     - bat_inverter_limit_kw: amount of kw a battery can produce/consume at once
+    - bat_min_pct: min charge to keep in the battery (between 0-1)
+    - bat_max_pct: max charge to keep in the battery (between 0-1)
     '''
     # costs overview:
     # hourly price: pay when consuming, receive when producing
     # energy taxes: pay when consuming,
-    # VAT         : pay when consuming, receive when producing (calculate over hourly price + energy taxes)
+    # VAT         : pay when consuming, (goes over the energy tax as well)
     # buy/sell pri: pay when consuming, pay when producing
     copy = None
     if bat == 'basic':
-        copy = b.simulate_battery(df, hp, hnp, hnc, capacity_kwh=bat_capacity_kwh, inverter_limit_kw=bat_inverter_limit_kw)
+        copy = b.simulate_battery(df, hp, hnp, hnc, capacity_kwh=bat_capacity_kwh, inverter_limit_kw=bat_inverter_limit_kw, min_pct=bat_min_pct, max_pct=bat_max_pct)
     elif bat == 'simple-buy':
         charge = lambda idx, row, available_self_power, possible_charge: min(available_self_power, possible_charge) if ((row[pp]+fee_cons+energy_tax)*(1.0+vat) > 0.0) else possible_charge # always charge with own power, if price is negative also with grid power
         discharge = lambda idx, row, satisfying_self_power, possible_discharge: min(satisfying_self_power, possible_discharge) # we are not going to 'smart-sell' here.
-        copy = b.simulate_battery_parametrized(df, hp, hnp, hnc, charge, discharge, capacity_kwh=bat_capacity_kwh, inverter_limit_kw=bat_inverter_limit_kw)
+        copy = b.simulate_battery_parametrized(df, hp, hnp, hnc, charge, discharge, capacity_kwh=bat_capacity_kwh, inverter_limit_kw=bat_inverter_limit_kw, min_pct=bat_min_pct, max_pct=bat_max_pct)
     elif bat == 'emhass':
-        return do_emhass()
+        return do_emhass(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, discard_overflow=discard_overflow, bat_capacity_kwh=bat_capacity_kwh, bat_inverter_limit_kw=bat_inverter_limit_kw, bat_min_pct=bat_min_pct, bat_max_pct=bat_max_pct)
     else:
         copy = df.copy()
 
@@ -185,7 +183,7 @@ def main():
     for pol in discard_policies:
         for mode in battery_modes:
             print(f'Estimated dynamic contract cost (battery: {mode}) (discard overflow: {pol}) for 6 months...')
-            out = calc(df, *houseargs, args.pp, args.energy_tax, args.vat, args.fee_consumption, args.fee_production, discard_overflow=pol, bat=mode, bat_capacity_kwh=50)
+            out = calc(df, *houseargs, args.pp, args.energy_tax, args.vat, args.fee_consumption, args.fee_production, discard_overflow=pol, bat=mode, bat_capacity_kwh=5)
             print(f'Total: {out.sum():.3f} euros')
             if args.plot:
                 plot(df, out)
