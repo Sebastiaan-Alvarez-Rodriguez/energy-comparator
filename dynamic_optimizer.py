@@ -39,42 +39,102 @@ def read_dynamics(path, colname):
         ok = True
     return df, ok
 
-def do_emhass(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, bat_capacity_kwh=10, bat_inverter_limit_kw=5.0, bat_min_pct=0.2, bat_max_pct=0.8):
-    from emhass.retrieve_mem import RetrieveMem
+def do_emhass(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, discard_overflow=None, bat_capacity_kwh=10, bat_inverter_limit_kw=5.0, bat_min_pct=0.2, bat_max_pct=0.8):
     from emhass.optimization import Optimization
-    from emhass.processor import Processor
+    from emhass.utils import get_root, get_logger
 
     copy = df.copy()
-    hc = 'hc'
+    hc = 'hc' # gross consumption (i.e. before own production)
     copy[hc] = copy[hnc] + copy[hp] - copy[hnp]
 
-    copy.rename({ hp: 'prod', hc: 'load' }, inplace=True)
-    copy['price_buy'] = (copy[pp] + energy_tax + fee_cons) * (1.0+vat)
+    copy.rename(columns={ hp: 'prod', hc: 'load' }, inplace=True)
+    copy['prod'] *= 1000 # was kWh, make it W (note stepsize is 1hr)
+    copy['load'] *= 1000 # was kWh, make it W (note stepsize is 1hr)
+    copy['price_buy'] = (copy[pp] + energy_tax + fee_cons) * (1.0+vat) # total price to buy a kWh
+    copy['price_sell'] = (copy[pp] + fee_prod) # total price to sell a kWh
 
-    battery_params = {
-        'nominal_capacity': bat_capacity_kwh*1000, # battery cap (Wh)
-        'max_charge_power': bat_inverter_limit_kw*1000, # charge speed (W)
-        'max_discharge_power': bat_inverter_limit_kw*1000, # discharge speed (W)
-        'efficiency_charge': 0.90, # charge efficiency factor (rest of power is lost)
-        'efficiency_discharge': 0.90, # discharge efficiency factor (rest of power is lost)
-        'min_soc': bat_min_pct, # min charge to keep
-        'max_soc': bat_max_pct, # max charge to keep
+    retrieve_hass_conf = {
+        'optimization_time_step': pd.Timedelta('0 days 01:00:00'),  # e.g. 30 minute steps (I have 60-minute data steps, is that important for this?)
+        'time_zone': 'Europe/Amsterdam',
+        'Latitude': 52.51,
+        'Longitude': 5.0,
+        'sensor_power_photovoltaics': 'prod',
+        'sensor_power_load_no_var_loads': 'load',
+    }
+    optim_conf = {
+        # best documentation found for parameter meanings: https://github.com/davidusb-geek/emhass/blob/master/src/emhass/static/openapi.json
+        'costfun': 'profit',  # Maximaliseer winst / minimaliseer kosten
+        'set_use_battery': True,
+        # 'lp_solver': 'PULP_CBC_CMD', # works but is a bit slow
+        'lp_solver': 'HIghs',
+        # 'lp_solver_path': '/usr/bin/cbc', # what is this anyway, I don't have it installed. CAN'T I JUST HAVE THIS SIMPLY RUN?!
+        'num_threads': 0,
+        'number_of_deferrable_loads': 0, # amount of shiftable loads like e.g. washing machine, to different timepoints.
+        'weight_battery_discharge': 0.0, # extra weight or 'cost' for discharging battery (default 0.0) 
+        'weight_battery_charge': 0.0, # extra weight or 'cost' for charging battery (default 0.0) 
+        'operating_hours_of_each_deferrable_load': [],
+        'start_timesteps_of_each_deferrable_load': [],
+        'end_timesteps_of_each_deferrable_load': [],
+        'nominal_power_of_deferrable_loads': 0,
+        'set_nocharge_from_grid': False, # forbid charging battery from the grid?
+        'set_nodischarge_to_grid': True, # forbid delivering battery power to the grid?
+        'set_battery_dynamic': False, # Set a power dynamic limiting condition to the battery power
+        'set_total_pv_sell': False, # assume all PV power is injected directly into the grid, i.e. no self-consumption possible before hitting grid.
+        'set_use_pv': True,
+        'lp_solver_mip_rel_gap': 0.02,
     }
 
+    plant_conf = {
+        'maximum_power_from_grid': 15000,
+        'maximum_power_to_grid': 15000,
+        # Batterij parameters (Nu in Wh en fracties voor SoC)
+        'battery_nominal_energy_capacity': bat_capacity_kwh * 1000,  # Wh
+        'battery_charge_power_max': bat_inverter_limit_kw * 1000,    # W
+        'battery_discharge_power_max': bat_inverter_limit_kw * 1000, # W
+        'battery_charge_efficiency': 0.90,
+        'battery_discharge_efficiency': 0.90,
+        'battery_minimum_state_of_charge': bat_min_pct,              # Bv. 0.10 voor 10%
+        'battery_maximum_state_of_charge': bat_max_pct,              # Bv. 0.90 voor 90%
+        'battery_target_state_of_charge': 0.5,                       # Doel aan eind van de rit
+        'inverter_is_hybrid': False, # not a inverter that does both PV and battery AC/DC conversions
+        'compute_curtailment': False, # idk, official statement: When enabled, curtailment that is cost-equivalent is scheduled as late as possible in the optimization horizon
+    }
+    emhass_conf = {
+        'retrieve_hass_conf': retrieve_hass_conf,
+        'optim_conf': optim_conf,
+        'plant_conf': plant_conf,
+        'data_path': Path('/var/tmp'),
+    }
+
+    logger, _ = get_logger(fun_name='emhass_perfect_optim', emhass_conf=emhass_conf)
     opt = Optimization(
-        retrieve_mem=RetrieveMem(),
-        optimization_mindate=df_historical.index.min(),
-        optimization_maxdate=df_historical.index.max(),
-        set_type='perfect-optim'  # Backtesten met historische data
+        retrieve_hass_conf = retrieve_hass_conf,
+        optim_conf = optim_conf,
+        plant_conf = plant_conf,
+        var_load_cost = 'price_buy',
+        var_prod_price = 'price_sell',
+        costfun = 'profit',
+        emhass_conf = emhass_conf,
+        logger = logger,
     )
 
-    cost_arguments = {'weight_cost_function': 1.0} # Focus puur op minimale kosten
-    results = opt.perform_perfect_optimization(df_historical, battery_params, cost_arguments)
+    runtime_data = {
+        'pv_power_forecast': copy['prod'].tolist(),
+        'load_power_forecast': copy['load'].tolist(),
+        'load_cost_forecast': copy['price_buy'].tolist(),
+        'prod_price_forecast': copy['price_sell'].tolist(),
+    }
+    # df_res = opt.perform_perfect_optimization(copy, runtime_data)
+    df_res = opt.perform_optimization(
+        data_opt=copy,
+        p_pv=copy['prod'].values,
+        p_load=copy['load'].values,
+        unit_load_cost=copy['price_buy'].values,
+        unit_prod_price=copy['price_sell'].values,
+    )
 
-    # 5. Resultaten analyseren
-    # 'results' bevat nu kolommen zoals: 'p_bat_charge', 'p_bat_discharge', 'p_grid_import'
-    print(f'Minimale totale jaarkosten volgens LP-algoritme: €{results["cost"].sum():.2f}')
-    
+    return df_res['cost_profit']
+
 def calc(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, discard_overflow=None, bat=None, bat_capacity_kwh=10, bat_inverter_limit_kw=5.0, bat_min_pct=0.20, bat_max_pct=0.80):
     '''
     basic calculation of energy cost.
@@ -180,7 +240,7 @@ def main():
     print()
 
     # battery_modes = [None, 'basic', 'smart']
-    battery_modes = [None, 'basic', 'simple-buy']
+    battery_modes = [None, 'basic', 'simple-buy', 'emhass']
     discard_policies = [None, 'all', 'positive']
     for pol in discard_policies:
         for mode in battery_modes:
