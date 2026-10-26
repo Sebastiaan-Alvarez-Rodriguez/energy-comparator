@@ -93,9 +93,9 @@ def do_emhass(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, discard
         'battery_discharge_power_max': bat_inverter_limit_kw * 1000, # W
         'battery_charge_efficiency': 0.90,
         'battery_discharge_efficiency': 0.90,
-        'battery_minimum_state_of_charge': bat_min_pct,              # Bv. 0.10 voor 10%
-        'battery_maximum_state_of_charge': bat_max_pct,              # Bv. 0.90 voor 90%
-        'battery_target_state_of_charge': 0.5,                       # Doel aan eind van de rit
+        'battery_minimum_state_of_charge': bat_min_pct,
+        'battery_maximum_state_of_charge': bat_max_pct,
+        'battery_target_state_of_charge': 0.5,
         'inverter_is_hybrid': False, # not a inverter that does both PV and battery AC/DC conversions
         'compute_curtailment': False, # idk, official statement: When enabled, curtailment that is cost-equivalent is scheduled as late as possible in the optimization horizon
     }
@@ -132,8 +132,7 @@ def do_emhass(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, discard
         unit_load_cost=copy['price_buy'].values,
         unit_prod_price=copy['price_sell'].values,
     )
-
-    return df_res['cost_profit']
+    return df_res['cost_profit'] * -1 # flip the number signs, i.e. -800 originally meant '800 euros cost' while 50 meant '50 euros returned'
 
 def calc(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, discard_overflow=None, bat=None, bat_capacity_kwh=10, bat_inverter_limit_kw=5.0, bat_min_pct=0.20, bat_max_pct=0.80):
     '''
@@ -168,7 +167,8 @@ def calc(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, discard_over
         discharge = lambda idx, row, satisfying_self_power, possible_discharge: min(satisfying_self_power, possible_discharge) # we are not going to 'smart-sell' here.
         copy = b.simulate_battery_parametrized(df, hp, hnp, hnc, charge, discharge, capacity_kwh=bat_capacity_kwh, inverter_limit_kw=bat_inverter_limit_kw, min_pct=bat_min_pct, max_pct=bat_max_pct)
     elif bat == 'emhass':
-        return do_emhass(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, discard_overflow=discard_overflow, bat_capacity_kwh=bat_capacity_kwh, bat_inverter_limit_kw=bat_inverter_limit_kw, bat_min_pct=bat_min_pct, bat_max_pct=bat_max_pct)
+        copy = df.copy()
+        return do_emhass(copy, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, discard_overflow=discard_overflow, bat_capacity_kwh=bat_capacity_kwh, bat_inverter_limit_kw=bat_inverter_limit_kw, bat_min_pct=bat_min_pct, bat_max_pct=bat_max_pct)
     else:
         copy = df.copy()
 
@@ -176,7 +176,7 @@ def calc(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, discard_over
         copy[hnp] = 0.0 # no net production, discard ALL
     elif discard_overflow == 'positive':
         copy.loc[(copy[hnp] > 0.0) & (copy[pp] <= fee_prod), hnp] = 0.0 # discard production if price turns negative
-    return compute_costs(copy,  hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod)
+    return compute_costs(copy, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod)
 
 def compute_costs(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod):
     price_consume = df[hnc] * df[pp] # net consumption * kwh price gross
@@ -244,6 +244,8 @@ def main():
     discard_policies = [None, 'all', 'positive']
     for pol in discard_policies:
         for mode in battery_modes:
+            if mode == 'emhass' and pol != None:
+                continue
             print(f'Estimated dynamic contract cost (battery: {mode}) (discard overflow: {pol}) for 6 months...')
             out = calc(df, *houseargs, args.pp, args.energy_tax, args.vat, args.fee_consumption, args.fee_production, discard_overflow=pol, bat=mode, bat_capacity_kwh=5)
             print(f'Total: {out.sum():.3f} euros')
