@@ -171,9 +171,9 @@ def main():
         return
     df = df.merge(prices, left_index=True, right_index=True,  how='left') # with this trick: hourly prices are added to the main df, using left join. If there is no hit for the measured time in 'df', then a NaN is filled in.
     df = df.dropna(subset=[args.pp]) # drop data for which we have no dynamic prices
-    print(f'Number of datapoints: {len(df.index)} (so {len(df.index)/24:.2f} days of data)')
+    print(f'Number of datapoints (dynamics-house combined data): {len(df.index)} (so {len(df.index)/24:.2f} days of data)')
     print(f'Stats:')
-    print(f'  {df[args.hnc].sum():.2f}kWh net consumed')
+    print(f'  {(df[args.hnc].sum()):.2f}kWh net consumed')
     print(f'  {df[args.hnp].sum():.2f}kWh net produced')
     print()
 

@@ -31,8 +31,8 @@ def house_read(path, hp, hnp, hnc, filter):
         df = df.pivot(index = 'last_changed', columns='entity_id', values='state')
         df = df.fillna(0.0) # this is valid: used sensors fill NaN sometimes when no production is present.
         ok = True
-        print(f'Number of datapoints: {len(df.index)}')
+        print(f'Number of datapoints read from house: {len(df.index)}')
         if filter:
             df.query(filter, inplace=True)
-            print(f'Number of datapoints (post-filter): {len(df.index)}')
+            print(f'Number of datapoints read from house (post-filter): {len(df.index)}')
     return df, ok
