@@ -23,6 +23,13 @@ def house_verify(df, *names):
             ok = False
     return ok
 
+def drop_nonfloats(df, *colnames, inplace=False):
+    colnames = list(colnames)
+    df[colnames] = df[colnames].apply(pd.to_numeric, errors='coerce')
+    df = df.dropna(subset=colnames, inplace = inplace)
+    if not inplace:
+        return df
+
 def house_read(path, hp, hnp, hnc, filter):
     '''Reads house usage data (hourly statistics)'''
     df = pd.read_csv(path, comment='#')
@@ -30,6 +37,7 @@ def house_read(path, hp, hnp, hnc, filter):
     if house_verify(df, hp, hnp, hnc):
         df = df.pivot(index = 'last_changed', columns='entity_id', values='state')
         df = df.fillna(0.0) # this is valid: used sensors fill NaN sometimes when no production is present.
+        df = drop_nonfloats(df, hp, hnp, hnc)
         ok = True
         print(f'Number of datapoints read from house: {len(df.index)}')
         if filter:

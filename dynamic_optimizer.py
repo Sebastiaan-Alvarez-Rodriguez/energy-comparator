@@ -25,17 +25,19 @@ def verify_dynamics(df, *names):
 
 def read_dynamics(path, colname):
     '''Reads dynamic input prices from jeroen.nl (export as csv). Also normalizes data to hourly samples'''
-    prices = pd.read_csv(path, comment='#', sep=';')
+    df = pd.read_csv(path, comment='#', sep=';')
     ok = False
-    if verify_dynamics(prices, colname):
-        prices['prijs_excl_belastingen'] = prices['prijs_excl_belastingen'].str.replace(',', '.').astype(float)
-        prices['datum_utc'] = pd.to_datetime(prices['datum_utc'])
-        prices = prices.set_index('datum_utc')
-        prices.index.name = 'last_changed'
-        prices = prices[['prijs_excl_belastingen']].resample('1h').mean()
-        prices.index = prices.index.strftime('%Y-%m-%dT%H:%M:%S.000Z')
+    if verify_dynamics(df, colname):
+        df['prijs_excl_belastingen'] = df['prijs_excl_belastingen'].str.replace(',', '.').astype(float)
+        df['datum_utc'] = pd.to_datetime(df['datum_utc'])
+        df = s.drop_nonfloats(df, colname)
+
+        df = df.set_index('datum_utc')
+        df.index.name = 'last_changed'
+        df = df[['prijs_excl_belastingen']].resample('1h').mean()
+        df.index = df.index.strftime('%Y-%m-%dT%H:%M:%S.000Z')
         ok = True
-    return prices, ok
+    return df, ok
 
 def do_emhass(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, bat_capacity_kwh=10, bat_inverter_limit_kw=5.0, bat_min_pct=0.2, bat_max_pct=0.8):
     from emhass.retrieve_mem import RetrieveMem
