@@ -39,8 +39,8 @@ def house_read(path, hp, hnp, hnc, filter):
         df = df.fillna(0.0) # this is valid: used sensors fill NaN sometimes when no production is present.
         df = drop_nonfloats(df, hp, hnp, hnc)
         ok = True
-        print(f'Number of datapoints read from house: {len(df.index)}')
+        print(f'Number of datapoints read from database: {len(df.index)}')
         if filter:
             df.query(filter, inplace=True)
-            print(f'Number of datapoints read from house (post-filter): {len(df.index)}')
+            print(f'Number of datapoints read from database (post-filter): {len(df.index)}')
     return df, ok

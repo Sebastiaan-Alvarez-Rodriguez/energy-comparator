@@ -174,7 +174,7 @@ def calc(df, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod, discard_over
 
     if discard_overflow == 'all':
         copy[hnp] = 0.0 # no net production, discard ALL
-    elif discard_overflow == 'positive':
+    elif discard_overflow == 'negative':
         copy.loc[(copy[hnp] > 0.0) & (copy[pp] <= fee_prod), hnp] = 0.0 # discard production if price turns negative
     return compute_costs(copy, hp, hnp, hnc, pp, energy_tax, vat, fee_cons, fee_prod)
 
@@ -219,6 +219,8 @@ def main():
     # all power related specs expected in kWh, or euro/kWh where applicable.
     parser = argparse.ArgumentParser()
     add_args(parser)
+    parser.add_argument('--battery', nargs='*', default=['none'], choices=['none', 'basic', 'simple-buy', 'emhass'], help='decide battery policy')
+    parser.add_argument('--discard-policy', nargs='*', default=['none'], choices=['do-nothing', 'all', 'negative'], help='decide discard policy (all=discard all power to the grid (do not deliver any power to the grid), negative=discard all power which does not deliver money)')
     parser.add_argument('--plot', action='store_true', help='If set, simulates several different battery configurations for a household')
     s.house_args(parser)
     args = parser.parse_args()
@@ -233,22 +235,23 @@ def main():
         return
     df = df.merge(prices, left_index=True, right_index=True,  how='left') # with this trick: hourly prices are added to the main df, using left join. If there is no hit for the measured time in 'df', then a NaN is filled in.
     df = df.dropna(subset=[args.pp]) # drop data for which we have no dynamic prices
-    print(f'Number of datapoints (dynamics-house combined data): {len(df.index)} (so {len(df.index)/24:.2f} days of data)')
+    days = len(df.index)/24
+    print(f'\nNumber of datapoints (dynamics-house combined data): {len(df.index)} (so {days:.2f} days of data)')
     print(f'Stats:')
     print(f'  {(df[args.hnc].sum()):.2f}kWh net consumed')
     print(f'  {df[args.hnp].sum():.2f}kWh net produced')
     print()
 
-    # battery_modes = [None, 'basic', 'smart']
-    battery_modes = [None, 'basic', 'simple-buy', 'emhass']
-    discard_policies = [None, 'all', 'positive']
-    for pol in discard_policies:
-        for mode in battery_modes:
-            if mode == 'emhass' and pol != None:
+    
+
+    for pol in args.discard_policy:
+        for mode in args.battery:
+            if mode == 'emhass' and pol != 'none':
                 continue
-            print(f'Estimated dynamic contract cost (battery: {mode}) (discard overflow: {pol}) for 6 months...')
+            print(f'Estimated dynamic contract cost (battery: {mode}) (discard overflow: {pol}) for {days/30:.2f} months...')
             out = calc(df, *houseargs, args.pp, args.energy_tax, args.vat, args.fee_consumption, args.fee_production, discard_overflow=pol, bat=mode, bat_capacity_kwh=5)
             print(f'Total: {out.sum():.3f} euros')
+            print(f'Projected yearly: {out.sum()/days*365}')
             if args.plot:
                 plot(df, out)
     return
